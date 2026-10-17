@@ -1,0 +1,139 @@
+{
+  "id": "generic",
+  "name": "Générique (tous jeux)",
+  "description": "Marche sur n'importe quel jeu : réactions vocales, rires, cris, tirs, explosions, pics de volume et mots-clés.",
+  "vocabulary": [],
+  "ocr_langs": [
+    "fr",
+    "en"
+  ],
+  "ocr_zones": {
+    "landscape": [],
+    "portrait": []
+  },
+  "signals": {
+    "laughter": {
+      "threshold": 0.35,
+      "event": "laughter",
+      "min_duration": 0.5
+    },
+    "scream": {
+      "threshold": 0.35,
+      "event": "scream",
+      "min_duration": 0.5
+    },
+    "gunshot": {
+      "threshold": 0.25,
+      "event": "gunfight",
+      "min_duration": 1.0
+    },
+    "explosion": {
+      "threshold": 0.4,
+      "event": "explosion",
+      "min_duration": 0.5
+    },
+    "loudness_spike": {
+      "threshold": 0.5,
+      "event": "loud",
+      "min_duration": 0.5
+    },
+    "speech_excited": {
+      "threshold": 0.6,
+      "event": "hype_talk",
+      "min_duration": 2.0
+    }
+  },
+  "keywords": {
+    "oh putain": 8,
+    "putain": 3,
+    "let's go": 10,
+    "lets go": 10,
+    "c'est pas possible": 8,
+    "t'as vu": 6,
+    "t'as vu ça": 9,
+    "incroyable": 8,
+    "non non non": 8,
+    "nooon": 8,
+    "oh mon dieu": 8,
+    "je suis mort": 7,
+    "il est mort": 10,
+    "je l'ai eu": 10,
+    "je l'ai tué": 10,
+    "gg": 6,
+    "clip": 10,
+    "clippe ça": 12,
+    "mdr": 5,
+    "attends attends": 6,
+    "oh my god": 8
+  },
+  "events": {
+    "laughter": {
+      "label": "Fou rire",
+      "score": 9,
+      "before": 4,
+      "after": 3,
+      "effects": [
+        "punch_zoom"
+      ]
+    },
+    "scream": {
+      "label": "Cri",
+      "score": 8,
+      "before": 4,
+      "after": 3,
+      "effects": [
+        "shake",
+        "punch_zoom"
+      ]
+    },
+    "gunfight": {
+      "label": "Fusillade",
+      "score": 6,
+      "before": 3,
+      "after": 3,
+      "effects": [
+        "shake"
+      ]
+    },
+    "explosion": {
+      "label": "Explosion",
+      "score": 7,
+      "before": 3,
+      "after": 3,
+      "effects": [
+        "flash",
+        "shake"
+      ]
+    },
+    "loud": {
+      "label": "Pic de volume",
+      "score": 4,
+      "before": 3,
+      "after": 2,
+      "effects": []
+    },
+    "hype_talk": {
+      "label": "Réaction",
+      "score": 5,
+      "before": 3,
+      "after": 3,
+      "effects": []
+    },
+    "keyword": {
+      "label": "Mot-clé",
+      "score": 1,
+      "before": 4,
+      "after": 3,
+      "effects": [
+        "punch_zoom"
+      ]
+    },
+    "bookmark": {
+      "label": "Marque-page",
+      "score": 30,
+      "before": 20,
+      "after": 5,
+      "effects": []
+    }
+  }
+}

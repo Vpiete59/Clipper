@@ -1,0 +1,376 @@
+{
+  "id": "hunt_showdown",
+  "name": "Hunt: Showdown 1896",
+  "extends": "generic",
+  "description": "Notifications du HUD (indices, bannissement, prime, extraction, mort), fusillades et réactions. Textes du client français et anglais.",
+  "vocabulary": [
+    "Hunt",
+    "Showdown",
+    "Bayou",
+    "Stillwater",
+    "Lawson",
+    "DeSalle",
+    "Mammon's Gulch",
+    "Butcher",
+    "Spider",
+    "Assassin",
+    "Scrapbeak",
+    "Rotjaw",
+    "Hellborn",
+    "bounty",
+    "prime",
+    "extraction",
+    "banish",
+    "indice",
+    "Hunter",
+    "chasseur",
+    "Hive",
+    "Meathead",
+    "Immolator",
+    "Armored",
+    "Hellhound",
+    "Mosin",
+    "Sparks",
+    "Nitro",
+    "Avtomat",
+    "Romero",
+    "Winfield",
+    "Bomb Lance",
+    "Dolch",
+    "Lebel",
+    "Centennial",
+    "headshot",
+    "full",
+    "one shot",
+    "down",
+    "rez",
+    "Dark Sight"
+  ],
+  "ocr_zones": {
+    "landscape": [
+      {
+        "name": "notification",
+        "rect": [
+          0.3,
+          0.56,
+          0.7,
+          0.7
+        ],
+        "every_s": 0.5,
+        "events": [
+          {
+            "name": "clue",
+            "patterns": [
+              "analyse de l'indice",
+              "indice",
+              "clue"
+            ],
+            "threshold": 82
+          },
+          {
+            "name": "banish",
+            "patterns": [
+              "bannissement",
+              "banni",
+              "banish"
+            ],
+            "threshold": 82
+          },
+          {
+            "name": "bounty",
+            "patterns": [
+              "prime",
+              "bounty",
+              "jeton de prime",
+              "bounty token"
+            ],
+            "threshold": 85
+          },
+          {
+            "name": "extract",
+            "patterns": [
+              "extraction",
+              "extrait",
+              "extracted",
+              "vous vous etes extrait"
+            ],
+            "threshold": 82
+          },
+          {
+            "name": "revive",
+            "patterns": [
+              "reanime",
+              "réanimé",
+              "revived",
+              "relever"
+            ],
+            "threshold": 82
+          }
+        ]
+      },
+      {
+        "name": "death_screen",
+        "rect": [
+          0.25,
+          0.1,
+          0.75,
+          0.35
+        ],
+        "every_s": 1.0,
+        "events": [
+          {
+            "name": "death",
+            "patterns": [
+              "tue par",
+              "tué par",
+              "killed by",
+              "vous etes mort",
+              "vous êtes mort",
+              "a terre",
+              "à terre",
+              "you died"
+            ],
+            "threshold": 82
+          }
+        ]
+      },
+      {
+        "name": "spectate",
+        "rect": [
+          0.28,
+          0.69,
+          0.72,
+          0.78
+        ],
+        "every_s": 1.0,
+        "events": [
+          {
+            "name": "death",
+            "patterns": [
+              "pour quitter la vue spectateur",
+              "vue spectateur",
+              "quitter la vue",
+              "spectator view",
+              "stop spectating"
+            ],
+            "threshold": 80
+          }
+        ]
+      }
+    ],
+    "portrait": [
+      {
+        "name": "notification",
+        "rect": [
+          0.05,
+          0.56,
+          0.95,
+          0.68
+        ],
+        "every_s": 0.5,
+        "events": [
+          {
+            "name": "clue",
+            "patterns": [
+              "analyse de l'indice",
+              "indice",
+              "clue"
+            ],
+            "threshold": 82
+          },
+          {
+            "name": "banish",
+            "patterns": [
+              "bannissement",
+              "banni",
+              "banish"
+            ],
+            "threshold": 82
+          },
+          {
+            "name": "bounty",
+            "patterns": [
+              "prime",
+              "bounty",
+              "jeton de prime",
+              "bounty token"
+            ],
+            "threshold": 85
+          },
+          {
+            "name": "extract",
+            "patterns": [
+              "extraction",
+              "extrait",
+              "extracted",
+              "vous vous etes extrait"
+            ],
+            "threshold": 82
+          },
+          {
+            "name": "revive",
+            "patterns": [
+              "reanime",
+              "réanimé",
+              "revived",
+              "relever"
+            ],
+            "threshold": 82
+          }
+        ]
+      },
+      {
+        "name": "death_screen",
+        "rect": [
+          0.0,
+          0.1,
+          1.0,
+          0.35
+        ],
+        "every_s": 1.0,
+        "events": [
+          {
+            "name": "death",
+            "patterns": [
+              "tue par",
+              "tué par",
+              "killed by",
+              "vous etes mort",
+              "vous êtes mort",
+              "a terre",
+              "à terre",
+              "you died"
+            ],
+            "threshold": 82
+          }
+        ]
+      },
+      {
+        "name": "spectate",
+        "rect": [
+          0.03,
+          0.69,
+          0.97,
+          0.78
+        ],
+        "every_s": 1.0,
+        "events": [
+          {
+            "name": "death",
+            "patterns": [
+              "pour quitter la vue spectateur",
+              "vue spectateur",
+              "quitter la vue",
+              "spectator view",
+              "stop spectating"
+            ],
+            "threshold": 80
+          }
+        ]
+      }
+    ]
+  },
+  "signals": {
+    "gunshot": {
+      "threshold": 0.15,
+      "event": "gunfight",
+      "min_duration": 0.5
+    }
+  },
+  "keywords": {
+    "il est down": 10,
+    "il est à terre": 10,
+    "il est a terre": 10,
+    "un de moins": 10,
+    "dans la tête": 10,
+    "headshot": 10,
+    "one shot": 9,
+    "il est full": 6,
+    "je suis down": 7,
+    "rez moi": 6,
+    "relève moi": 6,
+    "ils sont deux": 5,
+    "ils sont trois": 6,
+    "team wipe": 14,
+    "wipe": 10,
+    "on a la prime": 10,
+    "on extrait": 6,
+    "bien joué": 8,
+    "quel tir": 10,
+    "il campe": 5,
+    "il est où": 4,
+    "derrière toi": 6,
+    "il m'a tué": 10,
+    "m'a tué": 8,
+    "il m'a mis une tête": 12,
+    "une tête": 7,
+    "je l'ai tué": 12,
+    "je l'ai mis": 8,
+    "je l'ai eu": 10,
+    "il est mort": 10,
+    "c'est chaud": 4
+  },
+  "events": {
+    "gunfight": {
+      "label": "Fusillade",
+      "score": 8,
+      "before": 4,
+      "after": 3,
+      "effects": [
+        "shake",
+        "slowmo"
+      ]
+    },
+    "clue": {
+      "label": "Indice",
+      "score": 2,
+      "before": 2,
+      "after": 2,
+      "effects": []
+    },
+    "banish": {
+      "label": "Bannissement",
+      "score": 6,
+      "before": 3,
+      "after": 4,
+      "effects": [
+        "flash"
+      ]
+    },
+    "bounty": {
+      "label": "Prime récupérée",
+      "score": 10,
+      "before": 3,
+      "after": 4,
+      "effects": [
+        "punch_zoom"
+      ]
+    },
+    "extract": {
+      "label": "Extraction",
+      "score": 10,
+      "before": 6,
+      "after": 2,
+      "effects": [
+        "punch_zoom"
+      ]
+    },
+    "revive": {
+      "label": "Réanimation",
+      "score": 5,
+      "before": 4,
+      "after": 2,
+      "effects": []
+    },
+    "death": {
+      "label": "Mort",
+      "score": 9,
+      "before": 12,
+      "after": 2,
+      "effects": [
+        "slowmo",
+        "flash"
+      ]
+    }
+  }
+}
