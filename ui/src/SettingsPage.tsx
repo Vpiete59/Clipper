@@ -1,148 +1,234 @@
-import { useEffect, useState } from 'react'
+import { ClosedCaptioning, DeviceMobile, FolderOpen, MagicWand, Plus, Target, Trash, VideoCamera } from '@phosphor-icons/react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type Game, type Settings } from './api'
+import { Switch, useToast } from './ui'
 
-const EFFECTS: [string, string][] = [
-  ['punch_zoom', 'Zoom punch sur l\'action'],
-  ['slowmo', 'Ralenti sur les fusillades et morts'],
-  ['shake', 'Tremblement de caméra'],
-  ['flash', 'Flash blanc'],
-  ['hook_title', 'Bandeau d\'accroche (2,8 s)'],
-  ['progress_bar', 'Barre de progression'],
+const EFFECTS: [string, string, string][] = [
+  ['punch_zoom', 'Zoom punch', 'Zoom brusque sur l\'action, retour en douceur'],
+  ['slowmo', 'Ralenti', 'x0,5 autour des fusillades et des morts'],
+  ['shake', 'Tremblement', 'Secousse de caméra amortie sur les tirs'],
+  ['flash', 'Flash blanc', 'Éclair sur les explosions et les morts'],
+  ['hook_title', 'Bandeau d\'accroche', 'Ta phrase forte en haut pendant 2,8 s'],
+  ['progress_bar', 'Barre de progression', 'Incite à regarder jusqu\'au bout'],
+]
+const LAYOUTS: [string, string, ReactNode][] = [
+  ['center_crop', 'Recadrage centré', <><div className="game" /><div className="xhair" /></>],
+  ['facecam_split', 'Facecam + jeu', <><div className="game" /><div className="cam" /></>],
+  ['blur_fit', 'Image entière', <><div className="blurbg" /><div className="fit" /></>],
+]
+const SUB_STYLES: [string, string, React.CSSProperties][] = [
+  ['bold_pop', 'Bold pop', { fontFamily: '"Arial Black", sans-serif' }],
+  ['fire', 'Impact', { fontFamily: 'Impact, sans-serif', color: '#ff7a33' }],
+  ['clean', 'Sobre', { fontFamily: '"Segoe UI Semibold", sans-serif', fontWeight: 600 }],
+]
+const SECTIONS: [string, string, ReactNode][] = [
+  ['rec', 'Enregistrements', <VideoCamera size={17} aria-hidden />],
+  ['detect', 'Détection', <Target size={17} aria-hidden />],
+  ['subs', 'Sous-titres', <ClosedCaptioning size={17} aria-hidden />],
+  ['format', 'Format & effets', <MagicWand size={17} aria-hidden />],
 ]
 
 export default function SettingsPage({ games }: { games: Game[] }) {
   const [s, setS] = useState<Settings | null>(null)
-  const [saved, setSaved] = useState(false)
+  const toast = useToast()
+  const lastToast = useRef(0)
   useEffect(() => { api.settings().then(setS) }, [])
-  if (!s) return <div className="page muted">Chargement…</div>
+  if (!s) return <div className="page"><div className="skeleton" style={{ height: 500 }} /></div>
 
   const save = async (patch: Partial<Settings>) => {
+    setS({ ...s, ...patch })
     setS(await api.saveSettings(patch))
-    setSaved(true)
-    setTimeout(() => setSaved(false), 1500)
+    if (Date.now() - lastToast.current > 2500) { toast('Réglage enregistré', 'success'); lastToast.current = Date.now() }
   }
-  const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => save({ [k]: Number(e.target.value) } as Partial<Settings>)
+  const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const n = Number(e.target.value)
+    if (e.target.value !== '' && !Number.isNaN(n)) save({ [k]: n } as Partial<Settings>)
+  }
 
   return (
     <div className="page">
-      <div className="page-head"><h1>Réglages</h1>{saved && <span className="muted">Enregistré ✓</span>}</div>
-      <div className="settings">
-        <div className="card">
-          <h2 style={{ marginBottom: 16 }}>Enregistrements</h2>
-          <div className="field">
-            <label>Dossiers surveillés</label>
-            {s.watch_folders.map((f, i) => (
-              <div key={i} className="folder-row">
-                <input type="text" defaultValue={f} onBlur={e => {
-                  const next = [...s.watch_folders]; next[i] = e.target.value; save({ watch_folders: next.filter(Boolean) })
-                }} />
-                <button className="btn small danger" onClick={() => save({ watch_folders: s.watch_folders.filter((_, j) => j !== i) })}>✕</button>
-              </div>
-            ))}
-            <button className="btn small" style={{ alignSelf: 'flex-start' }} onClick={() => save({ watch_folders: [...s.watch_folders, ''] })}>+ Ajouter un dossier</button>
-            <span className="hint">Détectés depuis ta config OBS (enregistrement + plugin Vertical Canvas).</span>
-          </div>
-          <label className="check"><input type="checkbox" checked={s.auto_process} onChange={e => save({ auto_process: e.target.checked })} />
-            Analyser et rendre automatiquement chaque nouvel enregistrement</label>
-          <div className="field">
-            <label>Jeu par défaut</label>
-            <select value={s.default_game} onChange={e => save({ default_game: e.target.value })}>
-              {games.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label>Dossier de sortie des clips</label>
-            <input type="text" defaultValue={s.output_folder} onBlur={e => save({ output_folder: e.target.value })} />
-          </div>
-        </div>
-
-        <div className="card">
-          <h2 style={{ marginBottom: 16 }}>Détection</h2>
-          <div className="row">
-            <div className="field grow"><label>Clips max par vidéo</label><input type="number" min={1} max={30} value={s.max_clips} onChange={num('max_clips')} /></div>
-            <div className="field grow"><label>Score minimum</label><input type="number" min={0} step={1} value={s.min_score} onChange={num('min_score')} /></div>
-          </div>
-          <div className="row">
-            <div className="field grow"><label>Durée min (s)</label><input type="number" min={3} value={s.clip_min_s} onChange={num('clip_min_s')} /></div>
-            <div className="field grow"><label>Durée max (s)</label><input type="number" min={10} max={180} value={s.clip_max_s} onChange={num('clip_max_s')} /></div>
-          </div>
-          <div className="field">
-            <label>Mots-clés perso (un par ligne)</label>
-            <textarea rows={4} defaultValue={s.custom_keywords.join('\n')}
-              onBlur={e => save({ custom_keywords: e.target.value.split('\n').map(x => x.trim()).filter(Boolean) })} />
-            <span className="hint">Dis-les pendant ta partie (« clippe ça ») pour forcer un moment fort. Les réglages s'appliquent avec « Ré-analyser » ou au prochain enregistrement.</span>
-          </div>
-        </div>
-
-        <div className="card">
-          <h2 style={{ marginBottom: 16 }}>Sous-titres</h2>
-          <div className="row">
-            <div className="field grow">
-              <label>Langue</label>
-              <select value={s.language} onChange={e => save({ language: e.target.value })}>
-                <option value="fr">Français</option><option value="en">Anglais</option><option value="auto">Détection auto</option>
-              </select>
-            </div>
-            <div className="field grow">
-              <label>Modèle Whisper</label>
-              <select value={s.whisper_model} onChange={e => save({ whisper_model: e.target.value })}>
-                <option value="large-v3">large-v3 (le plus précis)</option>
-                <option value="large-v3-turbo">large-v3-turbo (rapide)</option>
-                <option value="medium">medium</option>
-              </select>
-            </div>
-          </div>
-          <div className="row">
-            <div className="field grow">
-              <label>Style</label>
-              <select value={s.subtitle_style} onChange={e => save({ subtitle_style: e.target.value })}>
-                <option value="bold_pop">Bold pop (jaune)</option><option value="fire">Impact (orange)</option><option value="clean">Sobre</option>
-              </select>
-            </div>
-          </div>
-          <div className="row">
-            <div className="field grow">
-              <label>Hauteur, vidéos 16:9 ({Math.round(s.subtitle_y * 100)} %)</label>
-              <input type="range" min={0.3} max={0.9} step={0.01} value={s.subtitle_y} onChange={e => save({ subtitle_y: Number(e.target.value) })} />
-            </div>
-            <div className="field grow">
-              <label>Hauteur, vidéos verticales ({Math.round(s.subtitle_y_portrait * 100)} %)</label>
-              <input type="range" min={0.2} max={0.9} step={0.01} value={s.subtitle_y_portrait} onChange={e => save({ subtitle_y_portrait: Number(e.target.value) })} />
-            </div>
-          </div>
-          <div className="field">
-            <label>Piste audio à transcrire</label>
-            <input type="number" min={0} max={5} value={s.audio_track} onChange={num('audio_track')} />
-            <span className="hint">Astuce : dans OBS, mets ton micro seul sur une 2e piste et choisis 1 ici : les sous-titres seront bien plus propres.</span>
-          </div>
-        </div>
-
-        <div className="card">
-          <h2 style={{ marginBottom: 16 }}>Format 9:16 et effets</h2>
-          <div className="field">
-            <label>Cadrage des vidéos 16:9</label>
-            <select value={s.layout} onChange={e => save({ layout: e.target.value })}>
-              <option value="center_crop">Recadrage centré (viseur au milieu)</option>
-              <option value="facecam_split">Facecam en haut + jeu en bas</option>
-              <option value="blur_fit">Image entière sur fond flouté</option>
-            </select>
-            <span className="hint">Les enregistrements déjà verticaux (plugin Vertical Canvas) sont gardés tels quels.</span>
-          </div>
-          {s.layout === 'facecam_split' && (
-            <div className="field">
-              <label>Zone de la facecam (x0, y0, x1, y1 en fraction de l'image)</label>
-              <input type="text" defaultValue={s.facecam_rect.join(', ')}
-                onBlur={e => save({ facecam_rect: e.target.value.split(',').map(Number) })} />
-            </div>
-          )}
-          {EFFECTS.map(([k, label]) => (
-            <label key={k} className="check">
-              <input type="checkbox" checked={!!s.effects[k]} onChange={e => save({ effects: { ...s.effects, [k]: e.target.checked } })} />
-              {label}
-            </label>
-          ))}
+      <div className="page-head">
+        <div className="grow">
+          <div className="eyebrow">Configuration</div>
+          <h1 className="page-title">Réglages</h1>
+          <div className="page-sub">Chaque changement est enregistré tout de suite. Les réglages de détection s'appliquent au prochain enregistrement ou avec « Ré-analyser ».</div>
         </div>
       </div>
+
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Sections des réglages">
+          {SECTIONS.map(([id, label, icon]) => <a key={id} href={`#${id}`}>{icon}{label}</a>)}
+        </nav>
+
+        <div className="settings-sections">
+          <Section id="rec" icon={<VideoCamera size={20} />} title="Enregistrements" desc="Où Clipper trouve tes parties et où il dépose les clips.">
+            <div className="fgrid">
+              <div className="full">
+                <span className="field-label">Dossiers surveillés</span>
+                {s.watch_folders.map((f, i) => (
+                  <div key={`${i}-${f}`} className="folder-row">
+                    <input className="input" defaultValue={f} aria-label={`Dossier surveillé ${i + 1}`} placeholder="D:\Streaming"
+                      onBlur={e => { const next = [...s.watch_folders]; next[i] = e.target.value.trim(); save({ watch_folders: next.filter(Boolean) }) }} />
+                    <button className="btn icon" aria-label="Ouvrir le dossier" title="Ouvrir" onClick={() => api.reveal(f)}><FolderOpen size={16} /></button>
+                    <button className="btn icon danger" aria-label="Retirer ce dossier" title="Retirer" onClick={() => save({ watch_folders: s.watch_folders.filter((_, j) => j !== i) })}><Trash size={16} /></button>
+                  </div>
+                ))}
+                <button className="btn sm" onClick={() => setS({ ...s, watch_folders: [...s.watch_folders, ''] })}><Plus size={14} weight="bold" aria-hidden /> Ajouter un dossier</button>
+                <div className="hint">Détectés automatiquement depuis ta config OBS (enregistrement et plugin Vertical Canvas).</div>
+              </div>
+              <div className="full">
+                <Switch checked={s.auto_process} onChange={v => save({ auto_process: v })}
+                  label="Traitement automatique" hint="Analyser puis rendre les clips dès qu'un enregistrement se termine" />
+              </div>
+              <div>
+                <label className="field-label" htmlFor="default-game">Jeu par défaut</label>
+                <select id="default-game" className="select" value={s.default_game} onChange={e => save({ default_game: e.target.value })}>
+                  {games.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="field-label" htmlFor="out-folder">Dossier de sortie des clips</label>
+                <input id="out-folder" className="input" defaultValue={s.output_folder} onBlur={e => save({ output_folder: e.target.value.trim() })} />
+              </div>
+            </div>
+          </Section>
+
+          <Section id="detect" icon={<Target size={20} />} title="Détection" desc="Combien de moments garder, et à partir de quand un moment compte.">
+            <div className="fgrid">
+              <NumberField id="max-clips" label="Clips max par vidéo" value={s.max_clips} min={1} max={30} onChange={num('max_clips')} />
+              <NumberField id="min-score" label="Score minimum" value={s.min_score} min={0} max={100} onChange={num('min_score')}
+                hint="Plus bas = plus de clips, plus haut = seulement les meilleurs" />
+              <NumberField id="min-len" label="Durée minimum (s)" value={s.clip_min_s} min={3} max={60} onChange={num('clip_min_s')} />
+              <NumberField id="max-len" label="Durée maximum (s)" value={s.clip_max_s} min={10} max={180} onChange={num('clip_max_s')} />
+              <div className="full">
+                <label className="field-label" htmlFor="kw">Mots-clés perso</label>
+                <textarea id="kw" className="textarea" rows={3} defaultValue={s.custom_keywords.join('\n')} placeholder={'clippe ça\nquel tir'}
+                  onBlur={e => save({ custom_keywords: e.target.value.split('\n').map(x => x.trim()).filter(Boolean) })} />
+                <div className="hint">Un par ligne. Dis-les pendant ta partie pour forcer un moment fort.</div>
+              </div>
+            </div>
+          </Section>
+
+          <Section id="subs" icon={<ClosedCaptioning size={20} />} title="Sous-titres" desc="Transcription et apparence des sous-titres incrustés.">
+            <div className="sub-preview-wrap">
+              <div className="fgrid">
+                <div>
+                  <label className="field-label" htmlFor="lang">Langue</label>
+                  <select id="lang" className="select" value={s.language} onChange={e => save({ language: e.target.value })}>
+                    <option value="fr">Français</option><option value="en">Anglais</option><option value="auto">Détection auto</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="model">Modèle Whisper</label>
+                  <select id="model" className="select" value={s.whisper_model} onChange={e => save({ whisper_model: e.target.value })}>
+                    <option value="large-v3">large-v3 (le plus précis)</option>
+                    <option value="large-v3-turbo">large-v3-turbo (plus rapide)</option>
+                    <option value="medium">medium</option>
+                  </select>
+                </div>
+                <div className="full">
+                  <span className="field-label">Style</span>
+                  <div className="style-cards" role="radiogroup" aria-label="Style des sous-titres">
+                    {SUB_STYLES.map(([k, label, css]) => (
+                      <button key={k} className="style-card" role="radio" aria-checked={s.subtitle_style === k} onClick={() => save({ subtitle_style: k })}>
+                        <span className="sample" style={css}>LET'S <span style={{ color: k === 'fire' ? '#ff7a33' : k === 'clean' ? '#fff' : '#ffe500' }}>GO</span></span>
+                        <small>{label}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="y-land">Hauteur, sources 16:9 · <span className="mono">{Math.round(s.subtitle_y * 100)} %</span></label>
+                  <input id="y-land" type="range" min={0.3} max={0.9} step={0.01} value={s.subtitle_y} onChange={e => setS({ ...s, subtitle_y: Number(e.target.value) })}
+                    onPointerUp={e => save({ subtitle_y: Number((e.target as HTMLInputElement).value) })}
+                    onKeyUp={e => save({ subtitle_y: Number((e.target as HTMLInputElement).value) })} />
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="y-port">Hauteur, sources verticales · <span className="mono">{Math.round(s.subtitle_y_portrait * 100)} %</span></label>
+                  <input id="y-port" type="range" min={0.2} max={0.9} step={0.01} value={s.subtitle_y_portrait} onChange={e => setS({ ...s, subtitle_y_portrait: Number(e.target.value) })}
+                    onPointerUp={e => save({ subtitle_y_portrait: Number((e.target as HTMLInputElement).value) })}
+                    onKeyUp={e => save({ subtitle_y_portrait: Number((e.target as HTMLInputElement).value) })} />
+                </div>
+                <div className="full">
+                  <NumberField id="track" label="Piste audio à transcrire" value={s.audio_track} min={0} max={5} onChange={num('audio_track')}
+                    hint="Astuce : dans OBS, mets ton micro seul sur une 2e piste et choisis 1 ici. Les sous-titres ignoreront Discord et le jeu." />
+                </div>
+              </div>
+              <SubPreview s={s} />
+            </div>
+          </Section>
+
+          <Section id="format" icon={<MagicWand size={20} />} title="Format 9:16 et effets" desc="Comment tes parties 16:9 deviennent des clips verticaux.">
+            <span className="field-label">Cadrage des vidéos 16:9</span>
+            <div className="layout-options" role="radiogroup" aria-label="Cadrage">
+              {LAYOUTS.map(([k, label, art]) => (
+                <button key={k} className="layout-opt" role="radio" aria-checked={s.layout === k} onClick={() => save({ layout: k })}>
+                  <div className="phone" aria-hidden>{art}</div>{label}
+                </button>
+              ))}
+            </div>
+            <div className="hint" style={{ marginBottom: 16 }}>
+              <DeviceMobile size={13} style={{ verticalAlign: '-2px' }} aria-hidden /> Les enregistrements déjà verticaux (plugin Vertical Canvas) sont gardés tels quels.
+            </div>
+            {s.layout === 'facecam_split' && (
+              <div style={{ marginBottom: 16 }}>
+                <label className="field-label" htmlFor="cam">Zone de la facecam dans l'image 16:9 (x0, y0, x1, y1 en fractions)</label>
+                <input id="cam" className="input mono" defaultValue={s.facecam_rect.join(', ')}
+                  onBlur={e => { const r = e.target.value.split(',').map(Number); if (r.length === 4 && r.every(n => !Number.isNaN(n))) save({ facecam_rect: r }) }} />
+              </div>
+            )}
+            <span className="field-label">Effets de rétention</span>
+            <div className="effects-grid">
+              {EFFECTS.map(([k, label, hint]) => (
+                <Switch key={k} checked={!!s.effects[k]} label={label} hint={hint} onChange={v => save({ effects: { ...s.effects, [k]: v } })} />
+              ))}
+            </div>
+          </Section>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Section({ id, icon, title, desc, children }: { id: string; icon: ReactNode; title: string; desc: string; children: ReactNode }) {
+  return (
+    <section id={id} className="card sset" aria-labelledby={`${id}-t`}>
+      <div className="sset-head">
+        <div className="sset-icon" aria-hidden>{icon}</div>
+        <div><h2 id={`${id}-t`} className="section-title">{title}</h2><p>{desc}</p></div>
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function NumberField({ id, label, value, min, max, onChange, hint }: {
+  id: string; label: string; value: number; min: number; max: number; hint?: string
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+}) {
+  return (
+    <div>
+      <label className="field-label" htmlFor={id}>{label}</label>
+      <input id={id} className="input mono" type="number" min={min} max={max} defaultValue={value} onBlur={onChange} />
+      {hint && <div className="hint">{hint}</div>}
+    </div>
+  )
+}
+
+function SubPreview({ s }: { s: Settings }) {
+  const hl = s.subtitle_style === 'fire' ? '#ff7a33' : s.subtitle_style === 'clean' ? '#ffffff' : '#ffe500'
+  return (
+    <div aria-label="Aperçu du clip">
+      <span className="field-label" style={{ textAlign: 'center' }}>Aperçu</span>
+      <div className="sub-preview">
+        {s.effects.hook_title && <div className="hook">IL EST DOWN</div>}
+        <div className={`line ${s.subtitle_style}`} style={{ top: `${s.subtitle_y_portrait * 100}%`, ['--hl' as string]: hl }}>
+          JE L'AI <em>EU</em>
+        </div>
+        <div className="cam" />
+        {s.effects.progress_bar && <div className="bar" />}
+      </div>
+      <div className="hint" style={{ textAlign: 'center' }}>Source verticale avec facecam</div>
     </div>
   )
 }

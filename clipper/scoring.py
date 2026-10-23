@@ -119,9 +119,16 @@ def build_moments(events: list[dict], segments: list[dict], duration: float, *,
         end = min(duration, _snap(end, segments, +1, 4.0))
 
         top = max(group, key=lambda e: e["score"])
-        gameplay = [e for e in group if e["type"] != "keyword"]
+        # « Pic de volume » ou « Réaction » font de mauvais titres : on préfère une vraie action, sinon ta phrase
+        weak = {"keyword", "loud", "hype_talk"}
+        gameplay = [e for e in group if e["type"] not in weak]
         spoken = [e for e in group if e["type"] == "keyword"]
-        title = max(gameplay, key=lambda e: e["score"])["label"] if gameplay else top.get("text", top["label"])
+        if gameplay:
+            title = max(gameplay, key=lambda e: e["score"])["label"]
+        elif spoken:
+            title = max(spoken, key=lambda e: e["score"])["text"].capitalize()
+        else:
+            title = top["label"]
         # la phrase du joueur fait la meilleure accroche ; sinon le nom de l'action
         hook = max(spoken, key=lambda e: e["score"])["text"] if spoken else title
         moments.append({

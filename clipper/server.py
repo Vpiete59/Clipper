@@ -11,8 +11,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import games, jobs, library, pipeline, watcher
+from . import games, jobs, library, media, pipeline, watcher
 from .config import UI_DIST, Settings
+from .render.subtitles import join_words
 
 app = FastAPI(title="Clipper")
 
@@ -191,7 +192,7 @@ def edit_word(vid: str, body: WordEdit):
         data = loader(vid)
         seg = data["segments"][body.segment]
         seg["words"][body.word]["word"] = body.text
-        seg["text"] = " ".join(w["word"] for w in seg["words"])
+        seg["text"] = join_words([w["word"] for w in seg["words"]])
         saver(vid, data)
     return {"ok": True}
 
@@ -212,6 +213,23 @@ def render(vid: str, body: RenderBody):
 @app.get("/media/source/{vid}")
 def media_source(vid: str):
     return FileResponse(_video_or_404(vid)["path"])
+
+
+@app.get("/media/thumb/{vid}")
+def media_thumb(vid: str, t: float | None = None):
+    """Vignette JPEG mise en cache : à `t`, sinon au meilleur moment, sinon à 15 % de la vidéo."""
+    v = _video_or_404(vid)
+    if t is None:
+        analysis = pipeline.load_analysis(vid)
+        best = max(analysis["moments"], key=lambda m: m["score"], default=None) if analysis else None
+        t = best["peak"] if best else (v["duration"] or 60) * 0.15
+    out = pipeline.work_dir(vid) / f"thumb_{int(t * 10)}.jpg"
+    if not out.exists():
+        try:
+            media.thumbnail(v["path"], t, out, width=480)
+        except Exception as exc:  # fichier déplacé, ou instant au-delà de la fin
+            raise HTTPException(404, "Vignette indisponible") from exc
+    return FileResponse(out, headers={"Cache-Control": "max-age=86400"})
 
 
 @app.get("/media/file")

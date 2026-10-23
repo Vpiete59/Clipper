@@ -23,11 +23,27 @@ def _esc(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")")
 
 
+def glues_left(word: str) -> bool:
+    """Whisper découpe les élisions (« d » + « 'accord ») : ces morceaux se collent au mot précédent."""
+    return word[:1] in "'’-.,!?…)" or word[:1] == ""
+
+
+def join_words(words: list[str]) -> str:
+    out = ""
+    for w in words:
+        out += w if (not out or glues_left(w) or out.endswith(("'", "’", "-"))) else " " + w
+    return out
+
+
 def _chunks(words: list[dict], max_words: int = 3, max_gap: float = 0.6, max_dur: float = 1.4) -> list[list[dict]]:
     chunks: list[list[dict]] = []
     for w in words:
         if chunks:
             cur = chunks[-1]
+            # une élision ne doit jamais être séparée de son mot
+            if glues_left(w["word"]) or cur[-1]["word"].endswith(("'", "’")):
+                cur.append(w)
+                continue
             ends_sentence = cur[-1]["word"][-1:] in ".!?"
             if (len(cur) < max_words and w["start"] - cur[-1]["end"] <= max_gap
                     and w["end"] - cur[0]["start"] <= max_dur and not ends_sentence):
@@ -80,15 +96,16 @@ def build_ass(
             end = remap(chunk[i + 1]["start"]) if i + 1 < len(chunk) else min(remap(w["end"]) + 0.15, hard_end)
             if end <= start or start >= duration:
                 continue
-            parts = []
+            line = ""
             for j, txt in enumerate(texts):
+                piece = txt
                 if j == i:
-                    parts.append("{\\c" + hl + "&\\fscx112\\fscy112\\t(0,90,\\fscx100\\fscy100)}" + txt + "{\\c" + color + "&}")
-                else:
-                    parts.append(txt)
+                    piece = "{\\c" + hl + "&\\fscx112\\fscy112\\t(0,90,\\fscx100\\fscy100)}" + txt + "{\\c" + color + "&}"
+                glue = j == 0 or glues_left(txt) or texts[j - 1].endswith(("'", "’", "-"))
+                line += piece if glue else " " + piece
             pop = "{\\fscx85\\fscy85\\t(0,90,\\fscx100\\fscy100)}" if i == 0 else ""
             lines.append(
                 f"Dialogue: 0,{_ts(start)},{_ts(min(end, duration))},Sub,,0,0,0,,"
-                + f"{{\\pos({width // 2},{y})}}" + pop + " ".join(parts)
+                + f"{{\\pos({width // 2},{y})}}" + pop + line
             )
     return "\n".join(lines) + "\n"
