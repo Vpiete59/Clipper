@@ -30,20 +30,24 @@ uv run python -m clipper.cli render "D:\Streaming\partie.mkv" --game hunt_showdo
 
 | Étape | Brique | Fichier |
 |---|---|---|
-| Transcription mot à mot | faster-whisper large-v3 (GPU), vocabulaire du jeu injecté | `clipper/transcribe.py` |
-| Sons (rires, cris, tirs, explosions) | AST AudioSet (`MIT/ast-finetuned-audioset`) | `clipper/cues/audio.py` |
-| Pics de volume | RMS vs niveau ambiant glissant | `clipper/cues/audio.py` |
-| Mots-clés, débit de parole | transcription | `clipper/cues/speech.py` |
-| HUD du jeu | EasyOCR sur des zones définies par jeu | `clipper/cues/visual.py` |
-| Fusion → moments | scores, combos, alignement sur les phrases | `clipper/scoring.py` |
-| Rendu 9:16 | ffmpeg + NVENC : ralenti, zoom punch, tremblement, flash, sous-titres ASS animés, accroche, barre de progression | `clipper/render/` |
+| Voix isolées | Demucs htdemucs (GPU) : le jeu et les tirs sont retirés avant transcription | `clipper/transcribe.py` |
+| Transcription française | faster-whisper large-v3 par passages ≤ 15 s, prompt français ponctué | `clipper/transcribe.py` |
+| Recalage des mots | aligneur forcé MMS (torchaudio), typographie française dans les sous-titres | `clipper/transcribe.py`, `clipper/render/subtitles.py` |
+| Sons + empreintes | AST AudioSet : rires, cris, tirs, explosions, et empreinte de chaque demi-seconde | `clipper/cues/audio.py` |
+| Sons appris | cri de mort (Hunt) appris par l'exemple, avec contre-exemples 👍/👎 | `clipper/sounds.py` |
+| HUD du jeu | EasyOCR plein écran 1×/s, lignes gardées avec leur position, règles par zone | `clipper/cues/visual.py` |
+| Fusion → moments | scores, combos, combats JcJ (cri + tirs), alignement sur les phrases | `clipper/scoring.py` |
+| Parties | début « La chasse est ouverte », fin « Résumé de mission » ; chapitres du résumé | `clipper/scoring.py` |
+| Rendu 9:16 | NVENC : teaser, ralenti, accélération des temps morts, zoom, tremblement, flash, sons d'impact, sous-titres animés | `clipper/render/vertical.py` |
+| Résumé de partie | cold open, chapitres titrés, whoosh, barre de progression | `clipper/render/story.py` |
+| Publication | textes par plateforme, ouverture de la page d'upload, suivi | `clipper/publish.py` |
 
 ## Ajouter un jeu
 
 Copier `games/hunt_showdown.json`, puis renseigner :
-- `ocr_zones` : rectangles (fractions de l'image) où le jeu affiche du texte, avec les motifs à reconnaître ;
-- `keywords` : expressions qui signalent un moment fort ;
-- `vocabulary` : noms propres pour aider Whisper ;
-- `events` : score, marges avant/après et effets de chaque événement.
+- `ocr_rules` (16:9, plein écran) ou `ocr_zones` (vertical) : textes du jeu à reconnaître et zone de l'écran ;
+- `events` : score, marges avant/après, effets, `merge_s` (texte qui reste affiché), `highlight` ;
+- `keywords`, `vocabulary`, `hashtags`, `learned_sounds`.
 
-`"extends": "generic"` hérite de la détection audio et vocale de base.
+`"extends": "generic"` hérite de la détection audio et vocale de base. Les règles OCR se
+ré-appliquent sans relancer l'analyse : corriger un motif puis « Recalculer » suffit.

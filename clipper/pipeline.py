@@ -9,7 +9,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import games, media, scoring, transcribe
+from . import games, media, scoring, sounds, transcribe
 from .config import ANALYSIS_DIR, Settings
 from .cues import STEP, audio, speech, visual
 
@@ -40,23 +40,32 @@ def analyze(path: str, game_id: str, settings: Settings, progress: Progress | No
     wav = media.extract_audio(path, wd / "audio.wav", track=min(settings.audio_track, max(0, info.audio_tracks - 1)))
     samples, sr = media.load_wav(wav)
 
+    report("voix", 0.0)
+    track = min(settings.audio_track, max(0, info.audio_tracks - 1))
+    stereo = media.extract_audio(path, wd / "audio_44k.wav", track=track, sample_rate=44100, channels=2)
+    vocals = transcribe.isolate_vocals(stereo, wd / "vocals.wav", progress=lambda p: report("voix", p))
+    stereo.unlink(missing_ok=True)  # gros fichier, inutile une fois les voix extraites
+
     report("transcription", 0.0)
     segments = transcribe.transcribe(
         wav, settings.whisper_model, settings.language, profile.get("vocabulary"),
-        progress=lambda p: report("transcription", p),
+        progress=lambda p: report("transcription", p), vocals=vocals,
     )
 
     report("sons", 0.0)
     signals: dict[str, np.ndarray] = {}
     signals.update(audio.loudness(samples, sr, info.duration))
-    signals.update(audio.sound_events(samples, sr, info.duration, progress=lambda p: report("sons", p)))
+    sound_sig, embs, emb_t = audio.sound_events(samples, sr, info.duration, progress=lambda p: report("sons", p))
+    signals.update(sound_sig)
+    np.savez_compressed(wd / "embeddings.npz", emb=embs, t=emb_t)
     signals.update(speech.speech_intensity(segments, info.duration))
 
     report("image", 0.0)
     zones = profile["ocr_zones"].get(orientation, [])
-    vis_signals, ocr = visual.analyze(
+    vis_signals, ocr, ocr_lines = visual.analyze(
         path, info.duration, zones, tuple(profile.get("ocr_langs", ["fr", "en"])),
         progress=lambda p: report("image", p),
+        full_every=profile.get("ocr_full_every", {}).get(orientation),
     )
     signals.update(vis_signals)
 
@@ -64,7 +73,7 @@ def analyze(path: str, game_id: str, settings: Settings, progress: Progress | No
     raw = {
         "video_id": vid, "path": str(path), "game": game_id, "orientation": orientation,
         "duration": info.duration, "width": info.width, "height": info.height, "fps": info.fps,
-        "segments": segments, "ocr": ocr, "bookmarks": [],
+        "segments": segments, "ocr": ocr, "ocr_lines": ocr_lines, "bookmarks": [],
     }
     (wd / "raw.json").write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
     report("moments", 0.0)
@@ -84,6 +93,64 @@ def load_signals(vid: str) -> dict[str, np.ndarray]:
         return {k: z[k] for k in z.files}
 
 
+def load_embeddings(vid: str) -> tuple[np.ndarray, np.ndarray]:
+    """Empreintes audio de la vidéo ; calculées à la volée pour les analyses d'avant leur ajout."""
+    f = work_dir(vid) / "embeddings.npz"
+    if not f.exists():
+        raw = load_raw(vid)
+        samples, sr = media.load_wav(work_dir(vid) / "audio.wav")
+        sound_sig, embs, emb_t = audio.sound_events(samples, sr, raw["duration"])
+        signals = load_signals(vid)
+        signals.update(sound_sig)  # même passage : on rafraîchit aussi les sons à la nouvelle résolution
+        np.savez_compressed(work_dir(vid) / "signals.npz", **signals)
+        np.savez_compressed(f, emb=embs, t=emb_t)
+    with np.load(f) as z:
+        return z["emb"], z["t"]
+
+
+def learned_signals(vid: str, profile: dict, duration: float) -> dict[str, np.ndarray]:
+    """Ressemblance avec chaque son appris pour ce jeu, sur la grille de la timeline."""
+    refs = sounds.references(profile["id"])
+    kinds = [k for k in profile.get("learned_sounds", {}) if refs.get(k, {}).get("pos")]
+    if not kinds:
+        return {}
+    embs, starts = load_embeddings(vid)
+    n = int(np.ceil(duration / STEP))
+    out = {}
+    for kind in kinds:
+        sims = audio.similarity(embs, refs[kind]["pos"])
+        if refs[kind]["neg"]:
+            # plus proche d'un contre-exemple que d'un exemple : ce n'est pas ce son
+            neg = audio.similarity(embs, refs[kind]["neg"])
+            sims = np.where(neg >= sims - 0.02, sims * 0.85, sims)
+        grid = np.zeros(n, dtype=np.float32)
+        for s, v in zip(starts, sims):
+            i0, i1 = int(s / STEP), min(n, int((s + audio.EMB_WIN) / STEP))
+            grid[i0:i1] = np.maximum(grid[i0:i1], v)
+        out[f"learned_{kind}"] = grid
+    return out
+
+
+def quiet_mask(vid: str, segments: list[dict], start: float, end: float) -> list[bool]:
+    """Pas de 0,5 s sans parole, sans tir ni pic sonore : candidats à l'accélération."""
+    sig = load_signals(vid)
+    i0, i1 = int(start / STEP), int(np.ceil(end / STEP))
+    loud = sig.get("loudness_spike", np.zeros(i1))[i0:i1]
+    gun = sig.get("gunshot", np.zeros(i1))[i0:i1]
+    quiet = (loud < 0.25) & (gun < 0.12)
+    for seg in segments:
+        for w in seg["words"]:
+            a, b = int(w["start"] / STEP) - i0, int(np.ceil(w["end"] / STEP)) - i0
+            quiet[max(0, a - 1):max(0, b + 1)] = False  # on ne coupe jamais la parole
+    return quiet.tolist()
+
+
+def _pool(v: np.ndarray, k: int) -> list[float]:
+    """Max par bloc de k pas : on allège la timeline sans perdre les pics."""
+    pad = (-len(v)) % k
+    return np.pad(v, (0, pad)).reshape(-1, k).max(axis=1).round(3).tolist()
+
+
 def rescore(vid: str, settings: Settings, game_id: str | None = None) -> dict:
     """Recalcule événements et moments sans relancer les modèles (changement de jeu, réglages, marque-pages)."""
     raw = load_raw(vid)
@@ -92,10 +159,18 @@ def rescore(vid: str, settings: Settings, game_id: str | None = None) -> dict:
         save_raw(vid, raw)
     profile = games.load(raw["game"])
     signals = load_signals(vid)
+    learned = learned_signals(vid, profile, raw["duration"])
+    signals.update(learned)
+    for kind, spec in profile.get("learned_sounds", {}).items():
+        if f"learned_{kind}" in learned:
+            profile["signals"][f"learned_{kind}"] = {"threshold": spec["threshold"], "event": spec["event"], "min_duration": 0}
     keywords = dict(profile.get("keywords", {}))
     keywords.update({k: 10 for k in settings.custom_keywords})
     hits = speech.keyword_hits(raw["segments"], keywords)
-    events = scoring.detect_events(profile, signals, raw["ocr"], hits, raw.get("bookmarks", []))
+    # règles plein écran ré-appliquées aux lignes lues : corriger un motif ne demande pas de relancer l'OCR
+    ocr = raw["ocr"] + visual.match_rules(raw.get("ocr_lines", []), profile.get("ocr_rules", {}).get(raw["orientation"], []))
+    events = scoring.detect_events(profile, signals, ocr, hits, raw.get("bookmarks", []))
+    matches = scoring.build_matches(events, raw["duration"])
     moments = scoring.build_moments(
         events, raw["segments"], raw["duration"],
         min_len=settings.clip_min_s, max_len=settings.clip_max_s,
@@ -108,9 +183,10 @@ def rescore(vid: str, settings: Settings, game_id: str | None = None) -> dict:
     moments.sort(key=lambda m: m["start"])
     for i, m in enumerate(moments):
         m["id"] = i
-    result = {**raw, "events": events, "moments": moments,
-              "timeline": {k: v[:: max(1, int(1 / STEP))].round(3).tolist() for k, v in signals.items()
-                           if k in ("loudness_spike", "laughter", "scream", "gunshot", "explosion", "motion", "speech_excited")},
+    result = {**{k: v for k, v in raw.items() if k != "ocr_lines"}, "events": events, "moments": moments, "matches": matches,
+              "timeline": {k: _pool(v, max(1, int(1 / STEP))) for k, v in signals.items()
+                           if k in ("loudness_spike", "laughter", "scream", "gunshot", "explosion", "motion", "speech_excited")
+                           or k.startswith("learned_")},
               "timeline_step": max(STEP, 1.0)}
     (work_dir(vid) / "analysis.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     return result

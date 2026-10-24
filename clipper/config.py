@@ -85,8 +85,14 @@ class Settings:
         "shake": True,
         "hook_title": True,
         "progress_bar": True,
+        "teaser": True,
+        "speed_ramp": True,
+        "sfx": True,
     })
     custom_keywords: list[str] = field(default_factory=list)
+    # publication
+    extra_hashtags: list[str] = field(default_factory=list)
+    publish_signature: str = ""
 
     @classmethod
     def load(cls) -> "Settings":
@@ -95,6 +101,8 @@ class Settings:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         s = cls(**known)
+        # nouveaux effets ajoutés après coup : activés par défaut sans écraser les choix existants
+        s.effects = {**cls().effects, **s.effects}
         if not s.watch_folders:
             s.watch_folders = detect_obs_folders() or [str(Path.home() / "Videos")]
         return s

@@ -11,43 +11,78 @@ Effets (activables dans les réglages, déclenchés par les événements du mome
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 from ..media import FFMPEG, NO_WINDOW
+from . import sfx
 from .subtitles import build_ass
 
 W, H = 1080, 1920
 MAX_SLOWMO = 2
 
 
-def _pieces(moment: dict, effects: dict) -> list[tuple[float, float, float]]:
-    """Découpe le moment en morceaux (début, fin, vitesse) en temps relatif au début du clip."""
+FAST = 1.8  # vitesse des passages calmes
+QUIET_MIN = 2.5  # un passage calme doit durer au moins ça pour être accéléré
+
+
+def _pieces(moment: dict, effects: dict, quiet: list[bool] | None = None, step: float = 0.5) -> list[tuple[float, float, float]]:
+    """Découpe le moment en morceaux (début, fin, vitesse) en temps relatif au début du clip.
+
+    Ralenti x0,5 autour des actions marquées « slowmo », accéléré x1,8 sur les passages calmes
+    (`quiet` : un booléen par pas de `step` secondes depuis le début du clip).
+    """
     start, end = moment["start"], moment["end"]
     total = end - start
-    windows: list[list[float]] = []
+    slow: list[list[float]] = []
     if effects.get("slowmo"):
         peaks = sorted((e for e in moment["events"] if "slowmo" in e["effects"]), key=lambda e: -e["score"])
         for e in peaks[:MAX_SLOWMO]:
-            a, b = max(0.0, e["t"] - start - 0.4), min(total, e["t"] - start + 1.0)
-            if b - a > 0.3:
-                windows.append([a, b])
-    windows.sort()
-    merged: list[list[float]] = []
-    for w in windows:
-        if merged and w[0] <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], w[1])
-        else:
-            merged.append(w)
+            lo, hi = max(0.0, e["t"] - start - 0.4), min(total, e["t"] - start + 1.0)
+            if hi - lo > 0.3:
+                slow.append([lo, hi])
+    slow = _merge(slow)
+
+    fast: list[list[float]] = []
+    if effects.get("speed_ramp") and quiet:
+        busy = [(e["t"] - start - 1.5, e["t"] - start + 1.5) for e in moment["events"]] + [tuple(w) for w in slow]
+        i = 0
+        while i < len(quiet):
+            if not quiet[i]:
+                i += 1
+                continue
+            j = i
+            while j < len(quiet) and quiet[j]:
+                j += 1
+            lo, hi = i * step + 0.5, min(total, j * step) - 0.5  # on garde une demi-seconde normale de chaque côté
+            if hi - lo >= QUIET_MIN - 1.0 and not any(lo < b2 and hi > a2 for a2, b2 in busy):
+                fast.append([lo, hi])
+            i = j
+
+    marks = sorted([(lo, hi, 0.5) for lo, hi in slow] + [(lo, hi, FAST) for lo, hi in fast])
     pieces, cursor = [], 0.0
-    for a, b in merged:
-        if a > cursor:
-            pieces.append((cursor, a, 1.0))
-        pieces.append((a, b, 0.5))
-        cursor = b
+    for lo, hi, speed in marks:
+        lo = max(lo, cursor)
+        if hi - lo < 0.2:
+            continue
+        if lo > cursor:
+            pieces.append((cursor, lo, 1.0))
+        pieces.append((lo, hi, speed))
+        cursor = hi
     if cursor < total:
         pieces.append((cursor, total, 1.0))
     return pieces
+
+
+def _merge(windows: list[list[float]]) -> list[list[float]]:
+    merged: list[list[float]] = []
+    for w in sorted(windows):
+        if merged and w[0] <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], w[1])
+        else:
+            merged.append(list(w))
+    return merged
 
 
 def _remapper(pieces: list[tuple[float, float, float]], origin: float):
@@ -86,7 +121,8 @@ def _reframe(layout: str, orientation: str, facecam: list[float], zoom: str, sha
             f"[vc]split[cam][game];"
             f"[cam]crop=iw*{x1 - x0:.4f}:ih*{y1 - y0:.4f}:iw*{x0:.4f}:ih*{y0:.4f},"
             f"scale={W}:{top_h}:force_original_aspect_ratio=increase,crop={W}:{top_h}[camv];"
-            f"[game]crop=ih*{W}/{bot_h}:ih,scale=w='trunc({W}*({zoom})/2)*2':h='trunc({bot_h}*({zoom})/2)*2':eval=frame,"
+            # on retire les 4 % du haut : barre d'overlay OBS et boussole n'ont rien à faire sous la facecam
+            f"[game]crop=ih*0.96*{W}/{bot_h}:ih*0.96:(iw-ow)/2:ih*0.04,scale=w='trunc({W}*({zoom})/2)*2':h='trunc({bot_h}*({zoom})/2)*2':eval=frame,"
             f"crop={W}:{bot_h}:x='(iw-ow)/2+{shake}':y='(ih-oh)/2'[gamev];"
             f"[camv][gamev]vstack[vr]"
         )
@@ -108,12 +144,27 @@ def render_clip(
     subtitle_y: float = 0.70,
     hook: str | None = None,
     fps: float = 60,
+    quiet: list[bool] | None = None,
 ) -> Path:
+    """`quiet` : passages calmes (un booléen par 0,5 s depuis le début du moment) à accélérer."""
     effects = effects or {}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     start, end = moment["start"], moment["end"]
-    pieces = _pieces(moment, effects)
-    remap = _remapper(pieces, start)
+    pieces = _pieces(moment, effects, quiet)
+
+    # teaser : le pic de l'action en ouverture, puis on « rembobine » au début du clip
+    peak = moment.get("peak", start) - start
+    teaser: tuple[float, float] | None = None
+    if effects.get("teaser") and peak > 6:
+        top = max(moment["events"], key=lambda e: e["score"])["type"] if moment["events"] else ""
+        if top in ("pvp_fight", "death_cry", "death"):
+            # au cri, l'écran est déjà noir (mort) : on montre l'action qui y mène
+            teaser = (max(0.0, peak - 1.7), peak)
+        else:
+            teaser = (max(0.0, peak - 0.8), min(end - start, peak + 0.9))
+    lead = (teaser[1] - teaser[0]) if teaser else 0.0
+    main_remap = _remapper(pieces, start)
+    remap = lambda t_src: lead + main_remap(t_src)  # noqa: E731
     out_dur = remap(end)
 
     ev_times = lambda name: sorted({round(remap(e["t"]), 3) for e in moment["events"]  # noqa: E731
@@ -121,6 +172,9 @@ def render_clip(
     punch = ev_times("punch_zoom")[:4]
     shakes = ev_times("shake")[:4]
     flashes = ev_times("flash")[:3]
+    if teaser:
+        punch = [round(min(peak - teaser[0], lead - 0.4), 3), *punch]  # le teaser frappe tout de suite
+        flashes = [round(lead, 3), *flashes]  # éclair au moment du retour en arrière
 
     base = 1.06 if shakes else 1.0
     zoom = f"min(1.35,{base}+" + _sum_expr(punch, "0.16*exp(-pow((t-{T})/0.35,2))") + ")"
@@ -128,11 +182,12 @@ def render_clip(
 
     # --- graphe : morceaux (ralentis) -> concat -> recadrage -> effets -> sous-titres
     parts, labels = [], []
-    for k, (a, b, speed) in enumerate(pieces):
+    all_pieces = ([(teaser[0], teaser[1], 1.0)] if teaser else []) + pieces
+    for k, (a, b, speed) in enumerate(all_pieces):
         parts.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=(PTS-STARTPTS)/{speed}[v{k}]")
         parts.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS,atempo={speed}[a{k}]")
         labels.append(f"[v{k}][a{k}]")
-    parts.append(f"{''.join(labels)}concat=n={len(pieces)}:v=1:a=1[vc0][ac]")
+    parts.append(f"{''.join(labels)}concat=n={len(all_pieces)}:v=1:a=1[vc0][ac0]")
     parts.append(f"[vc0]fps={min(fps, 60):.3f}[vc]")
     parts.append(_reframe(layout, orientation, facecam or [0, 0, 0.25, 0.25], zoom, shake))
 
@@ -150,11 +205,30 @@ def render_clip(
     if effects.get("progress_bar"):
         post.append(f"drawbox=x=0:y=ih-12:w='iw*t/{out_dur:.3f}':h=12:color=0xFFE500@0.95:t=fill")
     parts.append("[vr]" + ",".join(post) + ",format=yuv420p[vout]")
+
+    # effets sonores : whoosh sur le retour en arrière, impact sur les zooms et les kills
+    sfx_inputs: list[str] = []
+    cues = []
+    if effects.get("sfx"):
+        if teaser:
+            cues.append(("whoosh", max(0.0, lead - 0.3), 0.7))
+        for t_hit in sorted(set(punch))[:5]:
+            cues.append(("impact", max(0.0, t_hit - 0.03), 0.8))
+    if cues:
+        mix = ["[ac0]"]
+        for k, (name, at, vol) in enumerate(cues, start=1):
+            sfx_inputs += ["-i", str(sfx.path(name))]
+            ms = int(at * 1000)
+            parts.append(f"[{k}:a]adelay={ms}|{ms},volume={vol}[sfx{k}]")
+            mix.append(f"[sfx{k}]")
+        parts.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first,alimiter=limit=0.95[ac]")
+    else:
+        parts.append("[ac0]anull[ac]")
     graph = ";".join(parts)
 
     def run(codec: list[str]) -> subprocess.CompletedProcess:
         cmd = [FFMPEG, "-y", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", source,
-               "-filter_complex", graph, "-map", "[vout]", "-map", "[ac]", *codec,
+               *sfx_inputs, "-filter_complex", graph, "-map", "[vout]", "-map", "[ac]", *codec,
                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out_path.name]
         return subprocess.run(cmd, cwd=out_path.parent, capture_output=True, text=True, creationflags=NO_WINDOW)
 
@@ -165,4 +239,6 @@ def render_clip(
         res = run(["-c:v", "libx264", "-preset", "medium", "-crf", "21", "-maxrate", "14M", "-bufsize", "28M"])
     if res.returncode != 0:
         raise RuntimeError(f"ffmpeg a échoué : {res.stderr[-1500:]}")
+    # le montage a besoin de savoir où finit le teaser de chaque clip
+    out_path.with_suffix(".json").write_text(json.dumps({"teaser": round(lead, 3), "duration": round(out_dur, 3)}))
     return out_path

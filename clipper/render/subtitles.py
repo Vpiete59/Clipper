@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 STYLES = {
@@ -21,6 +22,13 @@ def _ts(t: float) -> str:
 
 def _esc(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")")
+
+
+def _fr_typo(token: str) -> str:
+    """Typographie française : espace insécable (\\h en ASS) avant ? ! : ; — « NON ? » et pas « NON? »."""
+    if token in ("?", "!", ":", ";"):
+        return "\\h" + token
+    return re.sub(r"(?<=\w)([?!:;]+)$", r"\\h\1", token)
 
 
 def glues_left(word: str) -> bool:
@@ -88,7 +96,7 @@ def build_ass(
 
     chunks = _chunks(words)
     for ci, chunk in enumerate(chunks):
-        texts = [_esc(w["word"]).upper() for w in chunk]
+        texts = [_fr_typo(_esc(w["word"]).upper()) for w in chunk]
         # un groupe s'efface au plus tard quand le suivant apparaît : jamais deux lignes superposées
         hard_end = remap(chunks[ci + 1][0]["start"]) if ci + 1 < len(chunks) else duration
         for i, w in enumerate(chunk):
@@ -101,7 +109,7 @@ def build_ass(
                 piece = txt
                 if j == i:
                     piece = "{\\c" + hl + "&\\fscx112\\fscy112\\t(0,90,\\fscx100\\fscy100)}" + txt + "{\\c" + color + "&}"
-                glue = j == 0 or glues_left(txt) or texts[j - 1].endswith(("'", "’", "-"))
+                glue = j == 0 or txt.startswith("\\h") or glues_left(txt) or texts[j - 1].endswith(("'", "’", "-"))
                 line += piece if glue else " " + piece
             pop = "{\\fscx85\\fscy85\\t(0,90,\\fscx100\\fscy100)}" if i == 0 else ""
             lines.append(

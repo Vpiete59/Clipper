@@ -1,9 +1,12 @@
-import { ClosedCaptioning, DeviceMobile, FolderOpen, MagicWand, Plus, Target, Trash, VideoCamera } from '@phosphor-icons/react'
+import { ClosedCaptioning, DeviceMobile, FolderOpen, MagicWand, PaperPlaneTilt, Plus, Target, Trash, VideoCamera } from '@phosphor-icons/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type Game, type Settings } from './api'
 import { Switch, useToast } from './ui'
 
 const EFFECTS: [string, string, string][] = [
+  ['teaser', 'Teaser d\'ouverture', 'Le pic de l\'action en premier, puis retour au début'],
+  ['speed_ramp', 'Accélération des temps morts', 'x1,8 quand il ne se passe rien, jamais pendant que tu parles'],
+  ['sfx', 'Sons d\'impact', 'Whoosh et coups sourds calés sur les zooms et les kills'],
   ['punch_zoom', 'Zoom punch', 'Zoom brusque sur l\'action, retour en douceur'],
   ['slowmo', 'Ralenti', 'x0,5 autour des fusillades et des morts'],
   ['shake', 'Tremblement', 'Secousse de caméra amortie sur les tirs'],
@@ -26,6 +29,7 @@ const SECTIONS: [string, string, ReactNode][] = [
   ['detect', 'Détection', <Target size={17} aria-hidden />],
   ['subs', 'Sous-titres', <ClosedCaptioning size={17} aria-hidden />],
   ['format', 'Format & effets', <MagicWand size={17} aria-hidden />],
+  ['publish', 'Publication', <PaperPlaneTilt size={17} aria-hidden />],
 ]
 
 export default function SettingsPage({ games }: { games: Game[] }) {
@@ -182,6 +186,23 @@ export default function SettingsPage({ games }: { games: Game[] }) {
               {EFFECTS.map(([k, label, hint]) => (
                 <Switch key={k} checked={!!s.effects[k]} label={label} hint={hint} onChange={v => save({ effects: { ...s.effects, [k]: v } })} />
               ))}
+            </div>
+          </Section>
+
+          <Section id="publish" icon={<PaperPlaneTilt size={20} />} title="Publication" desc="Ce que Clipper ajoute aux textes proposés pour YouTube, TikTok et Instagram.">
+            <div className="fgrid">
+              <div className="full">
+                <label className="field-label" htmlFor="sig">Signature</label>
+                <input id="sig" className="input" defaultValue={s.publish_signature} placeholder="Abonne-toi pour plus de Hunt 🔥"
+                  onBlur={e => save({ publish_signature: e.target.value.trim() })} />
+                <div className="hint">Ajoutée à chaque description, avant les hashtags.</div>
+              </div>
+              <div className="full">
+                <label className="field-label" htmlFor="tags">Hashtags en plus</label>
+                <input id="tags" className="input" defaultValue={s.extra_hashtags.map(t => `#${t.replace(/^#/, '')}`).join(' ')} placeholder="#vizile #twitchfr"
+                  onBlur={e => save({ extra_hashtags: e.target.value.split(/[\s,]+/).map(t => t.replace(/^#/, '')).filter(Boolean) })} />
+                <div className="hint">Ajoutés après ceux du jeu. Chaque plateforme en garde 5 au maximum.</div>
+              </div>
             </div>
           </Section>
         </div>

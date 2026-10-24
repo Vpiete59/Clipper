@@ -1,5 +1,5 @@
 import {
-  BookmarkSimple, Bomb, ChatCircleDots, CheckCircle, CircleNotch, Coins, Crosshair, Fire, FirstAid,
+  Binoculars, BookmarkSimple, Bomb, Crown, Ear, FlagCheckered, Sword, Timer, ChatCircleDots, CheckCircle, CircleNotch, Coins, Crosshair, Fire, FirstAid,
   Info, MagnifyingGlass, Megaphone, Quotes, SignOut, Skull, Smiley, SpeakerHigh, Sparkle, Warning,
   type Icon,
 } from '@phosphor-icons/react'
@@ -8,9 +8,17 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 /* --- événements : couleur + icône (jamais la couleur seule) --- */
 export const EVENTS: Record<string, { color: string; icon: Icon }> = {
   gunfight: { color: '#ff6b5e', icon: Crosshair },
+  pvp_fight: { color: '#ff3d55', icon: Sword },
+  death_cry: { color: '#e879f9', icon: Ear },
   death: { color: '#c4a1ff', icon: Skull },
   bounty: { color: '#ffb938', icon: Coins },
   extract: { color: '#3dd68c', icon: SignOut },
+  extracted: { color: '#3dd68c', icon: SignOut },
+  extraction: { color: '#7be0a8', icon: Timer },
+  boss_down: { color: '#ff8a3d', icon: Crown },
+  rival_bounty: { color: '#f5c451', icon: Binoculars },
+  match_start: { color: '#8b8b96', icon: FlagCheckered },
+  match_end: { color: '#8b8b96', icon: FlagCheckered },
   banish: { color: '#ff8a3d', icon: Fire },
   clue: { color: '#5ab4ff', icon: MagnifyingGlass },
   revive: { color: '#2dd4bf', icon: FirstAid },

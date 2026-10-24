@@ -11,7 +11,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import games, jobs, library, media, pipeline, watcher
+import numpy as np
+
+from . import games, jobs, library, media, pipeline, publish, sounds, watcher
+from .cues import STEP, audio
 from .config import UI_DIST, Settings
 from .render.subtitles import join_words
 
@@ -200,12 +203,112 @@ def edit_word(vid: str, body: WordEdit):
 class RenderBody(BaseModel):
     moment_ids: list[int] | None = None
     montage: bool = False
+    match_ids: list[int] | None = None
 
 
 @app.post("/api/videos/{vid}/render")
 def render(vid: str, body: RenderBody):
     _video_or_404(vid)
-    return {"queued": jobs.enqueue("render", vid, moment_ids=body.moment_ids, montage=body.montage)}
+    return {"queued": jobs.enqueue("render", vid, moment_ids=body.moment_ids, montage=body.montage, match_ids=body.match_ids)}
+
+
+# ---------- sons appris (cri de mort…)
+
+@app.get("/api/sounds")
+def get_sounds(game: str):
+    return sounds.list_sounds(game)
+
+
+class SoundExample(BaseModel):
+    kind: str
+    t: float
+    negative: bool = False
+    snap: bool = False  # « marquer ici » : se caler sur le pic sonore le plus proche
+
+
+@app.post("/api/videos/{vid}/sounds")
+def add_sound(vid: str, body: SoundExample):
+    v = _video_or_404(vid)
+    raw = pipeline.load_raw(vid)
+    if body.kind not in games.load(raw["game"]).get("learned_sounds", {}):
+        raise HTTPException(400, "Ce jeu n'a pas de son de ce type")
+    t = body.t
+    if body.snap:
+        db = pipeline.load_signals(vid)["loudness_db"]
+        i0, i1 = max(0, int((t - 1.5) / STEP)), int((t + 1.0) / STEP) + 1
+        t = (i0 + int(np.argmax(db[i0:i1]))) * STEP if i1 > i0 else t
+    samples, sr = media.load_wav(pipeline.work_dir(vid) / "audio.wav")
+    sounds.add(raw["game"], body.kind, audio.embed_at(samples, sr, t), vid, t, v["name"], body.negative)
+    res = pipeline.rescore(vid, Settings.load())
+    jobs._after_analysis(vid, res)  # noqa: SLF001
+    return {"t": t, "analysis": res}
+
+
+@app.delete("/api/sounds/{sound_id}")
+def delete_sound(sound_id: str):
+    sounds.delete(sound_id)
+    return {"ok": True}
+
+
+# ---------- publication semi-automatique
+
+def _render_or_404(path: str) -> tuple[dict, dict, dict | None]:
+    r = library.get_render(path)
+    if not r or not Path(path).exists():
+        raise HTTPException(404, "Clip introuvable")
+    analysis = pipeline.load_analysis(r["video_id"])
+    moment = None
+    if r["kind"] == "clip" and r["moment_id"] is not None:
+        moment = next((m for m in analysis["moments"] if m["id"] == r["moment_id"]), None)
+    return r, analysis, moment
+
+
+@app.get("/api/publish")
+def get_publish(path: str):
+    """Textes proposés (ou déjà retouchés) pour chaque plateforme, plus les limites à respecter."""
+    r, analysis, moment = _render_or_404(path)
+    match = next((m for m in analysis.get("matches", []) if m["id"] == r["moment_id"]), None) if r["kind"] == "story" else None
+    settings = Settings.load()
+    saved = library.get_publications(path)
+    out = {}
+    for key, spec in publish.PLATFORMS.items():
+        draft = publish.suggest(analysis, moment, key, settings, match)
+        pub = saved.get(key, {})
+        out[key] = {**spec, "title": pub.get("title") or draft["title"], "caption": pub.get("caption") or draft["caption"],
+                    "status": pub.get("status", "draft"), "url": pub.get("url")}
+    return {"duration": media.probe(path).duration, "platforms": out}
+
+
+class PublishPatch(BaseModel):
+    path: str
+    platform: str
+    title: str | None = None
+    caption: str | None = None
+    status: str | None = None
+    url: str | None = None
+
+
+@app.put("/api/publish")
+def put_publish(body: PublishPatch):
+    _render_or_404(body.path)
+    if body.platform not in publish.PLATFORMS:
+        raise HTTPException(400, "Plateforme inconnue")
+    fields = body.model_dump(exclude_none=True, exclude={"path", "platform"})
+    return library.save_publication(body.path, body.platform, **fields)
+
+
+class PublishOpen(BaseModel):
+    path: str
+    platform: str
+
+
+@app.post("/api/publish/open")
+def open_publish(body: PublishOpen):
+    _render_or_404(body.path)
+    if body.platform not in publish.PLATFORMS:
+        raise HTTPException(400, "Plateforme inconnue")
+    publish.open_upload(body.platform, body.path)
+    return {"ok": True}
 
 
 # ---------- fichiers

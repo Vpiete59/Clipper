@@ -64,29 +64,42 @@ def loudness(audio: np.ndarray, sr: int, duration: float) -> dict[str, np.ndarra
     return {"loudness_db": db, "loudness_spike": spike.astype(np.float32)}
 
 
-def sound_events(
-    audio: np.ndarray, sr: int, duration: float, progress: Callable[[float], None] | None = None
-) -> dict[str, np.ndarray]:
-    """Probabilité de rire / cri / tir / explosion sur chaque pas de la timeline.
+EMB_WIN, EMB_HOP = 1.0, 0.5  # fenêtres courtes : un cri d'agonie dure moins d'une seconde
 
-    Fenêtres de 2 s glissant d'1 s ; chaque pas reçoit le max des fenêtres qui le couvrent.
-    """
+
+def _forward(chunks: list[np.ndarray], sr: int):
+    """Un passage AST : probabilités AudioSet + empreinte (vecteur 768) de chaque fenêtre."""
     import torch
 
-    fe, model, device, groups = _get_classifier()
+    fe, model, device, _ = _get_classifier()
+    feats = fe(chunks, sampling_rate=sr, return_tensors="pt")["input_values"].to(device)
+    if device == "cuda":
+        feats = feats.half()
+    with torch.no_grad():
+        pooled = model.audio_spectrogram_transformer(feats).pooler_output
+        probs = torch.sigmoid(model.classifier(pooled)).float().cpu().numpy()
+    return probs, pooled.float().cpu().numpy()
+
+
+def sound_events(
+    audio: np.ndarray, sr: int, duration: float, progress: Callable[[float], None] | None = None
+) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
+    """Probabilité de rire / cri / tir / explosion sur chaque pas de la timeline, plus les empreintes.
+
+    Fenêtres d'1 s glissant de 0,5 s ; chaque pas reçoit le max des fenêtres qui le couvrent.
+    Les empreintes servent à retrouver un son appris (cri de mort, etc.) sans relancer le modèle.
+    """
+    _, _, _, groups = _get_classifier()
     n = int(np.ceil(duration / STEP))
     out = {g: np.zeros(n, dtype=np.float32) for g in groups}
-    win, hop = int(2.0 * sr), int(1.0 * sr)
+    win, hop = int(EMB_WIN * sr), int(EMB_HOP * sr)
     starts = list(range(0, max(1, len(audio) - win + 1), hop))
-    batch = 32
+    embs = np.zeros((len(starts), 768), dtype=np.float16)
+    batch = 48
     for b in range(0, len(starts), batch):
         chunk_starts = starts[b:b + batch]
-        chunks = [audio[s:s + win] for s in chunk_starts]
-        feats = fe(chunks, sampling_rate=sr, return_tensors="pt")["input_values"].to(device)
-        if device == "cuda":
-            feats = feats.half()
-        with torch.no_grad():
-            probs = torch.sigmoid(model(feats).logits).float().cpu().numpy()
+        probs, pooled = _forward([audio[s:s + win] for s in chunk_starts], sr)
+        embs[b:b + len(chunk_starts)] = pooled
         for s, p in zip(chunk_starts, probs):
             i0, i1 = int(s / sr / STEP), min(n, int((s + win) / sr / STEP))
             for g, ids in groups.items():
@@ -94,4 +107,22 @@ def sound_events(
                     out[g][i0:i1] = np.maximum(out[g][i0:i1], p[ids].max())
         if progress:
             progress(min(1.0, (b + batch) / len(starts)))
-    return out
+    return out, embs, np.array(starts, dtype=np.float32) / sr
+
+
+def embed_at(audio: np.ndarray, sr: int, t: float) -> np.ndarray:
+    """Empreinte d'un son précis : fenêtre d'1 s commençant un peu avant `t`."""
+    s = max(0, int((t - 0.25) * sr))
+    _, pooled = _forward([audio[s:s + int(EMB_WIN * sr)]], sr)
+    return pooled[0]
+
+
+def similarity(embs: np.ndarray, refs: list[np.ndarray]) -> np.ndarray:
+    """Similarité cosinus de chaque fenêtre avec le plus proche des sons de référence."""
+    if not refs or not len(embs):
+        return np.zeros(len(embs), dtype=np.float32)
+    e = embs.astype(np.float32)
+    e /= np.linalg.norm(e, axis=1, keepdims=True) + 1e-6
+    r = np.stack(refs).astype(np.float32)
+    r /= np.linalg.norm(r, axis=1, keepdims=True) + 1e-6
+    return (e @ r.T).max(axis=1)

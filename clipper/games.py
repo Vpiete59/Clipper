@@ -39,5 +39,9 @@ def list_games() -> list[dict]:
     games = []
     for path in sorted(GAMES_DIR.glob("*.json")):
         raw = json.loads(path.read_text(encoding="utf-8"))
-        games.append({"id": raw["id"], "name": raw["name"], "description": raw.get("description", "")})
+        full = load(raw["id"])
+        learned = {k: {"label": v["label"], "hint": v.get("hint", ""), "event": v["event"]}
+                   for k, v in full.get("learned_sounds", {}).items()}
+        games.append({"id": raw["id"], "name": raw["name"], "description": raw.get("description", ""),
+                      "learned_sounds": learned})
     return games

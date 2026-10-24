@@ -27,8 +27,8 @@ from . import jobs, watcher  # noqa: E402
 from .server import app  # noqa: E402
 
 
-def _serve() -> None:
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+def _serve(port: int = PORT) -> None:
+    uvicorn.run(app, host=HOST, port=port, log_level="warning")
 
 
 def _is_up() -> bool:
@@ -56,7 +56,21 @@ ERROR_PAGE = """<body style="background:#0d0e12;color:#e8eaf0;font-family:Segoe 
 def main() -> None:
     ap = argparse.ArgumentParser(prog="clipper")
     ap.add_argument("--no-window", action="store_true", help="serveur seul (ouvrir l'URL dans un navigateur)")
+    ap.add_argument("--port", type=int, default=PORT, help="port du serveur seul")
+    ap.add_argument("--no-workers", action="store_true",
+                    help="ni file de tâches ni surveillance OBS (pour un 2e serveur de test à côté de l'app)")
     args = ap.parse_args()
+
+    if args.no_window:
+        if args.port == PORT and _is_up():
+            print(f"Clipper tourne déjà sur http://{HOST}:{PORT}")
+            return
+        if not args.no_workers:
+            jobs.start()
+            watcher.start()
+        print(f"Clipper sur http://{HOST}:{args.port}")
+        _serve(args.port)
+        return
 
     import webview
 
@@ -68,11 +82,6 @@ def main() -> None:
 
     jobs.start()
     watcher.start()
-    if args.no_window:
-        print(f"Clipper sur http://{HOST}:{PORT}")
-        _serve()
-        return
-
     threading.Thread(target=_serve, daemon=True).start()
     if _wait_ready():
         webview.create_window("Clipper", f"http://{HOST}:{PORT}", **window_opts)

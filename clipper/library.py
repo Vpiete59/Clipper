@@ -23,6 +23,10 @@ _conn.executescript(
         id INTEGER PRIMARY KEY AUTOINCREMENT, video_id TEXT, moment_id INTEGER, kind TEXT,
         path TEXT, created_at REAL
     );
+    CREATE TABLE IF NOT EXISTS publications (
+        path TEXT, platform TEXT, title TEXT, caption TEXT, status TEXT DEFAULT 'draft',
+        url TEXT, updated_at REAL, PRIMARY KEY (path, platform)
+    );
     """
 )
 
@@ -67,6 +71,26 @@ def add_render(vid: str, moment_id: int | None, kind: str, path: str) -> None:
        (vid, moment_id, kind, path, time.time()))
 
 
+def get_publications(path: str) -> dict[str, dict]:
+    return {r["platform"]: r for r in _q("SELECT * FROM publications WHERE path=?", (path,))}
+
+
+def save_publication(path: str, platform: str, **fields) -> dict:
+    current = get_publications(path).get(platform, {})
+    row = {"title": None, "caption": None, "status": "draft", "url": None, **current, **fields}
+    _q("INSERT OR REPLACE INTO publications (path, platform, title, caption, status, url, updated_at) "
+       "VALUES (?,?,?,?,?,?,?)", (path, platform, row["title"], row["caption"], row["status"], row["url"], time.time()))
+    return get_publications(path)[platform]
+
+
 def list_renders(vid: str) -> list[dict]:
-    return [r for r in _q("SELECT * FROM renders WHERE video_id=? ORDER BY created_at DESC", (vid,))
+    rows = [r for r in _q("SELECT * FROM renders WHERE video_id=? ORDER BY created_at DESC", (vid,))
             if Path(r["path"]).exists()]
+    for r in rows:
+        r["published"] = [p for p, pub in get_publications(r["path"]).items() if pub["status"] == "published"]
+    return rows
+
+
+def get_render(path: str) -> dict | None:
+    rows = _q("SELECT * FROM renders WHERE path=? ORDER BY created_at DESC", (path,))
+    return rows[0] if rows else None

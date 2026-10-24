@@ -45,11 +45,11 @@ def probe(path: str | Path) -> MediaInfo:
     )
 
 
-def extract_audio(path: str | Path, out_wav: Path, track: int = 0, sample_rate: int = 16000) -> Path:
-    """Extrait une piste audio en WAV mono (format attendu par Whisper et le classifieur audio)."""
+def extract_audio(path: str | Path, out_wav: Path, track: int = 0, sample_rate: int = 16000, channels: int = 1) -> Path:
+    """Extrait une piste audio en WAV (16 kHz mono pour Whisper, 44,1 kHz stéréo pour Demucs)."""
     subprocess.run(
         [FFMPEG, "-y", "-v", "error", "-i", str(path), "-map", f"0:a:{track}",
-         "-ac", "1", "-ar", str(sample_rate), "-c:a", "pcm_s16le", str(out_wav)],
+         "-ac", str(channels), "-ar", str(sample_rate), "-c:a", "pcm_s16le", str(out_wav)],
         check=True, creationflags=NO_WINDOW,
     )
     return out_wav

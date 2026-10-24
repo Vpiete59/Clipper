@@ -4,8 +4,8 @@
     {
       "name": "clipper",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "clipper.app", "--no-window"],
-      "port": 8765
+      "runtimeArgs": ["-m", "clipper.app", "--no-window", "--port", "8775", "--no-workers"],
+      "port": 8775
     }
   ]
 }

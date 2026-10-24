@@ -39,6 +39,9 @@ def main() -> None:
     elif args.game and args.game != analysis["game"]:
         analysis = pipeline.rescore(vid, settings, args.game)
 
+    for match in analysis.get("matches", []):
+        print(f"  PARTIE {match['id'] + 1} {match['start']:7.1f}-{match['end']:7.1f}s {match['outcome']} "
+              f"— {', '.join(c['label'] for c in match['chapters'])}")
     for m in analysis["moments"]:
         kinds = ", ".join(sorted({e["label"] for e in m["events"]}))
         print(f"  #{m['id']} {m['start']:7.1f}-{m['end']:7.1f}s  score {m['score']:5.1f}  {m['title']:<16} [{kinds}]")
@@ -53,10 +56,21 @@ def main() -> None:
                 orientation=analysis["orientation"], layout=settings.layout, facecam=settings.facecam_rect,
                 effects=settings.effects, subtitle_style=settings.subtitle_style, subtitle_y=settings.subtitle_y_portrait if analysis["orientation"] == "portrait" else settings.subtitle_y,
                 hook=m.get("hook", m["title"]), fps=analysis["fps"],
+                quiet=pipeline.quiet_mask(vid, analysis["segments"], m["start"], m["end"]),
             )
             clips.append(path)
             print(f"  rendu {path.name} en {time.time() - t0:.1f} s")
-        if args.montage and clips:
+        if args.montage and analysis.get("matches"):
+            from .jobs import _render_kwargs
+            from .render.story import render_story
+
+            for match in analysis["matches"]:
+                t0 = time.time()
+                path = render_story(args.video, match, analysis, out_dir / f"partie_{match['id'] + 1:02d}.mp4",
+                                    render_kwargs=_render_kwargs(settings, analysis), effects=settings.effects,
+                                    quiet=lambda a, b: pipeline.quiet_mask(vid, analysis["segments"], a, b))
+                print(f"  résumé {path.name} ({len(match['chapters'])} chapitres) en {time.time() - t0:.0f} s")
+        elif args.montage and clips:
             ordered = sorted(clips, key=lambda p: -next(m["score"] for m in analysis["moments"] if p.stem.endswith(f"{m['id']:02d}")))
             print("  montage :", build_montage(ordered, out_dir / "montage.mp4"))
 

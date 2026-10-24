@@ -1,16 +1,22 @@
 import {
-  ArrowCounterClockwise, ArrowLeft, ArrowSquareOut, Check, CheckCircle, ClosedCaptioning, DeviceMobile,
-  Eye, EyeSlash, FilmStrip, FolderOpen, Lightning, Pause, Play, Plus, Quotes, Sparkle, Star, Warning,
+  ArrowCounterClockwise, ArrowLeft, Ear, FlagCheckered, ArrowSquareOut, Check, CheckCircle, ClosedCaptioning, DeviceMobile,
+  Eye, EyeSlash, FilmStrip, FolderOpen, Lightning, PaperPlaneTilt, Pause, Play, Plus, Quotes, Sparkle, Star, Warning,
 } from '@phosphor-icons/react'
+import PublishDialog, { PLATFORM_META } from './PublishDialog'
+import SoundsTab from './SoundsTab'
+import MatchesTab from './MatchesTab'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BUSY } from './App'
 import { api, fileUrl, fmtTime, STAGE_LABEL, type Analysis, type Game, type Moment, type Render, type Video } from './api'
 import { EventChip, eventStyle, ScoreRing, Spinner, useToast } from './ui'
 
 const STAGES: [string, number, number][] = [
-  ['audio', 0, 0.03], ['transcription', 0.03, 0.4], ['sons', 0.4, 0.55], ['image', 0.55, 0.97], ['moments', 0.97, 1],
+  ['voix', 0.02, 0.15], ['transcription', 0.15, 0.45], ['sons', 0.45, 0.58], ['image', 0.58, 0.97], ['moments', 0.97, 1],
 ]
 const SIGNALS: [string, string][] = [['gunshot', '#ff6b5e'], ['loudness_spike', '#6b6b76'], ['speech_excited', '#b98cff'], ['laughter', '#f78fc5']]
+
+const KIND_ORDER: Record<string, number> = { story: 0, montage: 1, clip: 2 }
+const renderLabel = (r: Render) => r.kind === 'story' ? `Résumé partie ${(r.moment_id ?? 0) + 1}` : r.kind === 'montage' ? 'Montage' : `Clip #${r.moment_id}`
 
 // élisions et ponctuation découpées par Whisper : collées au mot précédent, comme dans le rendu
 const GLUE = /^['’\-.,!?…)]/
@@ -24,7 +30,8 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
   const [time, setTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [active, setActive] = useState<number | null>(null)
-  const [tab, setTab] = useState<'moments' | 'subs'>('moments')
+  const [tab, setTab] = useState<'matches' | 'moments' | 'subs' | 'sounds'>('matches')
+  const [publishing, setPublishing] = useState<Render | null>(null)
   const player = useRef<HTMLVideoElement>(null)
   const loopEnd = useRef<number | null>(null)
   const toast = useToast()
@@ -115,7 +122,7 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
         </button>
         <button className="btn primary" disabled={busy || !included}
           onClick={() => api.render(id, null, true).then(() => toast(`Rendu de ${included} clip${included > 1 ? 's' : ''} + montage lancé`, 'success'))}>
-          <Sparkle size={16} weight="fill" aria-hidden /> Rendre {included || ''} clip{included > 1 ? 's' : ''} + montage
+          <Sparkle size={16} weight="fill" aria-hidden /> {analysis?.matches?.length ? `Rendre clips + ${analysis.matches.length} résumé${analysis.matches.length > 1 ? 's' : ''}` : `Rendre ${included || ''} clip${included > 1 ? 's' : ''} + montage`}
         </button>
       </div>
 
@@ -168,15 +175,25 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
                 {outDir && <button className="btn sm" onClick={() => api.reveal(outDir)}><FolderOpen size={15} aria-hidden /> Ouvrir le dossier</button>}
               </div>
               <div className="clips">
-                {[...renders].sort((a, b) => (a.kind === 'montage' ? -1 : b.kind === 'montage' ? 1 : (a.moment_id ?? 0) - (b.moment_id ?? 0))).map((r, i) => (
-                  <div key={r.id} className={`card clip ${r.kind === 'montage' ? 'montage' : ''}`} style={{ animationDelay: `${i * 40}ms` }}>
+                {[...renders].sort((a, b) => (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9) || (a.moment_id ?? 0) - (b.moment_id ?? 0)).map((r, i) => (
+                  <div key={r.id} className={`card clip ${r.kind !== 'clip' ? 'montage' : ''}`} style={{ animationDelay: `${i * 40}ms` }}>
                     <video src={`${fileUrl(r.path)}&v=${r.created_at}`} controls preload="metadata" />
                     <div className="clip-foot">
-                      {r.kind === 'montage'
-                        ? <><Star size={15} weight="fill" color="var(--accent)" aria-hidden /> Montage</>
-                        : <>Clip #{r.moment_id}</>}
+                      {r.kind === 'clip' ? <>Clip #{r.moment_id}</> : <><Star size={15} weight="fill" color="var(--accent)" aria-hidden /> {renderLabel(r)}</>}
                       <span className="grow" />
-                      <button className="btn sm icon ghost" onClick={() => api.reveal(r.path)} aria-label="Afficher dans l'Explorateur" title="Afficher dans l'Explorateur">
+                      <span className="pub-dots" aria-label={r.published.length ? `Publié sur ${r.published.map(p => PLATFORM_META[p]?.short).join(', ')}` : 'Pas encore publié'}>
+                        {Object.entries(PLATFORM_META).map(([key, meta]) => {
+                          const I = meta.icon
+                          const on = r.published.includes(key)
+                          return <I key={key} size={14} weight="fill" className={on ? 'on' : ''} color={on ? meta.color : undefined} aria-hidden />
+                        })}
+                      </span>
+                    </div>
+                    <div className="clip-actions">
+                      <button className="btn sm primary grow" onClick={() => setPublishing(r)}>
+                        <PaperPlaneTilt size={14} weight="fill" aria-hidden /> Publier
+                      </button>
+                      <button className="btn sm icon" onClick={() => api.reveal(r.path)} aria-label="Afficher dans l'Explorateur" title="Afficher dans l'Explorateur">
                         <ArrowSquareOut size={15} />
                       </button>
                     </div>
@@ -190,11 +207,17 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
         <aside className="card panel" aria-label="Moments et sous-titres">
           <div className="panel-head">
             <div className="tabs" role="tablist">
+              <button role="tab" aria-selected={tab === 'matches'} onClick={() => setTab('matches')}>
+                <FlagCheckered size={15} weight="fill" aria-hidden /> Parties <span className="count">{analysis?.matches?.length ?? 0}</span>
+              </button>
               <button role="tab" aria-selected={tab === 'moments'} onClick={() => setTab('moments')}>
                 <Lightning size={15} weight="fill" aria-hidden /> Moments <span className="count">{analysis?.moments.length ?? 0}</span>
               </button>
               <button role="tab" aria-selected={tab === 'subs'} onClick={() => setTab('subs')}>
                 <ClosedCaptioning size={16} aria-hidden /> Sous-titres
+              </button>
+              <button role="tab" aria-selected={tab === 'sounds'} onClick={() => setTab('sounds')}>
+                <Ear size={15} weight="fill" aria-hidden /> Sons
               </button>
             </div>
             {analysis && tab === 'moments' && (
@@ -204,6 +227,9 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
           <div className="panel-body" role="tabpanel">
             {!analysis ? (
               <p className="faint" style={{ padding: 8 }}>Les moments forts et les sous-titres apparaîtront ici après l'analyse.</p>
+            ) : tab === 'matches' ? (
+              <MatchesTab analysis={analysis} renders={renders} busy={busy} onSeek={(t, until) => seek(t, until)}
+                onRender={mid => api.render(id, null, false, [mid]).then(() => toast(`Résumé de la partie ${mid + 1} lancé`, 'success'))} />
             ) : tab === 'moments' ? (
               analysis.moments.length === 0 ? (
                 <div className="empty" style={{ padding: '32px 12px' }}>
@@ -217,6 +243,9 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
                   onPatch={p => patchMoment(m, p)}
                   onRender={() => api.render(id, [m.id], false).then(() => toast(`Rendu du clip #${m.id} lancé`, 'success'))} />
               ))
+            ) : tab === 'sounds' ? (
+              <SoundsTab vid={id} game={games.find(g => g.id === v.game)} analysis={analysis} time={time}
+                onSeek={(t, until) => seek(t, until)} onChanged={load} />
             ) : (
               <Subtitles analysis={analysis} time={time} onSeek={t => seek(t)}
                 onEdit={async (s, w, text) => { await api.editWord(id, s, w, text); load(); toast('Mot corrigé', 'success') }} />
@@ -224,6 +253,10 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
           </div>
         </aside>
       </div>
+      {publishing && (
+        <PublishDialog render={publishing} onClose={() => { setPublishing(null); load() }}
+          label={renderLabel(publishing)} />
+      )}
     </div>
   )
 }
@@ -330,6 +363,10 @@ function Timeline({ analysis, duration, time, active, onSeek, onSelect }: {
             </div>
           )
         })}
+        {(analysis.matches ?? []).map(m => (
+          <div key={`m${m.id}`} className={`mmatch ${m.outcome}`} style={{ left: pct(m.start), width: pct(m.end - m.start) }}
+            title={`Partie ${m.id + 1} · ${fmtTime(m.start)} → ${fmtTime(m.end)}`} />
+        ))}
         {hover !== null && <div className="hoverline" style={{ left: pct(hover) }} />}
         <div className="playhead" style={{ left: pct(time) }} />
       </div>

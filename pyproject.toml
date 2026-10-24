@@ -19,6 +19,7 @@ dependencies = [
     "pywebview>=5.3",
     "pydantic>=2.8",
     "hf-xet>=1.1",
+    "demucs>=4.0.1",
 ]
 
 [tool.uv.sources]
