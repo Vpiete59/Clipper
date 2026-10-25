@@ -71,7 +71,7 @@ def main() -> None:
                                     quiet=lambda a, b: pipeline.quiet_mask(vid, analysis["segments"], a, b))
                 print(f"  résumé {path.name} ({len(match['chapters'])} chapitres) en {time.time() - t0:.0f} s")
         elif args.montage and clips:
-            ordered = sorted(clips, key=lambda p: -next(m["score"] for m in analysis["moments"] if p.stem.endswith(f"{m['id']:02d}")))
+            ordered = sorted(clips, key=lambda p: next(m["start"] for m in analysis["moments"] if p.stem.endswith(f"{m['id']:02d}")))
             print("  montage :", build_montage(ordered, out_dir / "montage.mp4"))
 
 

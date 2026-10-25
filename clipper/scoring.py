@@ -127,14 +127,55 @@ def _action_hook(group: list[dict], title: str) -> str:
     return PVP_HOOKS[int(fight["t"]) % len(PVP_HOOKS)]
 
 
-def _snap(t: float, segments: list[dict], direction: int, max_shift: float) -> float:
-    """Recule le début (direction=-1) ou prolonge la fin (+1) jusqu'à une frontière de phrase."""
-    for seg in segments:
-        if seg["start"] < t < seg["end"]:
-            target = seg["start"] if direction < 0 else seg["end"] + 0.25
-            if abs(target - t) <= max_shift:
-                return target
-    return t
+def _sentence_at(t: float, segments: list[dict]) -> dict | None:
+    """La phrase en cours à l'instant `t` (marge de 50 ms pour ne pas compter un bord de phrase)."""
+    return next((s for s in segments if s["start"] + 0.05 < t < s["end"] - 0.05), None)
+
+
+def snap_window(start: float, end: float, segments: list[dict], *, max_back: float = 6.0, max_fwd: float = 8.0,
+                lo: float = 0.0, hi: float = float("inf")) -> tuple[float, float]:
+    """Cale un extrait sur les phrases : on ne commence ni ne finit jamais au milieu d'une phrase.
+
+    Début dans une phrase : on recule à son début ; si c'est trop loin, on saute la phrase
+    entamée. Fin dans une phrase : on la laisse finir ; si elle est trop longue, on coupe
+    juste avant elle. `lo`/`hi` : bornes à ne pas dépasser (la partie, la vidéo).
+    """
+    s, e = start, end
+    seg = _sentence_at(s, segments)
+    if seg:
+        if s - seg["start"] <= max_back and seg["start"] - 0.15 >= lo:
+            s = seg["start"] - 0.15
+        elif seg["end"] + 0.05 < e - 3:
+            s = seg["end"] + 0.05
+    seg = _sentence_at(e, segments)
+    if seg:
+        if seg["end"] - e <= max_fwd and seg["end"] + 0.3 <= hi:
+            e = seg["end"] + 0.3
+        elif seg["start"] - 0.1 > s + 3:
+            e = seg["start"] - 0.1
+    # parole enchaînée sans respirer : on attend une vraie pause (≥ 0,6 s) pour couper
+    ordered = sorted(segments, key=lambda x: x["start"])
+    budget_fwd, budget_back = max_fwd, max_back
+    for seg in ordered:
+        if e - 0.35 < seg["start"] <= e + 0.3 and seg["end"] + 0.3 <= hi and seg["end"] - e <= budget_fwd:
+            budget_fwd -= seg["end"] + 0.3 - e
+            e = seg["end"] + 0.3
+    for seg in reversed(ordered):
+        if s - 0.45 <= seg["end"] < s + 0.15 and seg["start"] - 0.15 >= lo and s - seg["start"] <= budget_back:
+            budget_back -= s - (seg["start"] - 0.15)
+            s = seg["start"] - 0.15
+    return round(max(lo, s), 2), round(min(hi, e), 2)
+
+
+def snap_chapters(chapters: list[dict], segments: list[dict], lo: float, hi: float) -> list[dict]:
+    """Applique `snap_window` à chaque chapitre, sans qu'ils se chevauchent ensuite."""
+    out, prev_end = [], lo
+    for c in chapters:
+        s, e = snap_window(c["start"], c["end"], segments, lo=max(lo, prev_end), hi=hi)
+        if e - s >= 1.0:
+            out.append({**c, "start": s, "end": e})
+            prev_end = e
+    return out
 
 
 def build_moments(events: list[dict], segments: list[dict], duration: float, *,
@@ -171,8 +212,7 @@ def build_moments(events: list[dict], segments: list[dict], duration: float, *,
             peak = max(group, key=lambda e: e["score"])["t"]
             start = max(0.0, min(start, peak - max_len * 0.6))
             end = min(duration, start + max_len)
-        start = max(0.0, _snap(start, segments, -1, 3.0))
-        end = min(duration, _snap(end, segments, +1, 4.0))
+        start, end = snap_window(start, end, segments, lo=0.0, hi=duration)
 
         top = max(group, key=lambda e: e["score"])
         # « Pic de volume » ou « Réaction » font de mauvais titres : on préfère une vraie action, sinon ta phrase
@@ -190,6 +230,7 @@ def build_moments(events: list[dict], segments: list[dict], duration: float, *,
         hook = max(spoken, key=lambda e: e["score"])["text"] if spoken else _action_hook(group, title)
         moments.append({
             "start": round(start, 2), "end": round(end, 2), "score": round(score, 1),
+            "potential": int(min(100, round(score * 1.5))),
             "title": title, "hook": hook, "peak": top["t"], "events": group,
         })
 
@@ -213,26 +254,26 @@ def build_moments(events: list[dict], segments: list[dict], duration: float, *,
 
 # ---------------------------------------------------------------- parties
 
-CHAPTERS = {
-    # type: (avant, après, priorité) — la priorité décide qui reste si le résumé est trop long
-    "pvp_fight": (None, 3.0, 1),
-    "extracted": (7.0, 1.5, 1),
-    "bounty": (3.0, 3.0, 2),
-    "boss_down": (6.0, 2.0, 2),
-    "death": (6.0, 1.5, 2),
-    "clue": (2.5, 2.0, 3),
-    "rival_bounty": (1.5, 3.0, 4),
-    "gunfight": (4.0, 3.0, 3),
-    "laughter": (4.0, 2.0, 4),
-}
-CHAPTER_LABELS = {
-    "pvp_fight": "Combat", "extracted": "Extraction réussie", "bounty": "Prime en poche",
-    "boss_down": "Boss abattu", "death": "Mort au combat", "clue": "Indice", "rival_bounty": "Une équipe a la prime",
-    "gunfight": "Ça tire", "laughter": "Fou rire",
+ORDINALS = ["Premier", "Deuxième", "Troisième", "Quatrième", "Cinquième", "Sixième"]
+
+# préréglages de montage du résumé : (avant, après) par type de chapitre et budget total
+PRESETS = {
+    # tout le récit, en prenant le temps (l'accélération des temps morts resserre ensuite)
+    "recit": {"budget": 180, "clue": (7, 6), "boss_found": (3, 6), "boss_down": (14, 5), "bounty": (6, 6),
+              "fight_pad": (4, 5), "fight_max": 40, "extract": (14, 3), "death": (10, 3), "max_clues": 6},
+    # l'action d'abord : indices courts, combats longs
+    "action": {"budget": 100, "clue": (4, 4), "boss_found": (2, 4), "boss_down": (10, 4), "bounty": (4, 4),
+               "fight_pad": (5, 6), "fight_max": 50, "extract": (10, 2), "death": (10, 3), "max_clues": 6},
+    # vidéo longue YouTube 16:9 : on laisse respirer chaque moment
+    "longform": {"budget": 720, "clue": (20, 12), "boss_found": (10, 15), "boss_down": (45, 12), "bounty": (15, 15),
+                 "fight_pad": (15, 15), "fight_max": 150, "extract": (40, 6), "death": (25, 6), "max_clues": 6},
+    # format court, tout tient en une minute
+    "express": {"budget": 70, "clue": (4, 3), "boss_found": (2, 3), "boss_down": (8, 3), "bounty": (3, 4),
+                "fight_pad": (3, 4), "fight_max": 25, "extract": (8, 2), "death": (8, 2), "max_clues": 6},
 }
 
 
-def build_matches(events: list[dict], duration: float, budget: float = 75.0) -> list[dict]:
+def build_matches(events: list[dict], duration: float, preset: str = "recit") -> list[dict]:
     """Découpe la vidéo en parties (début → fin) et choisit les chapitres de chaque résumé.
 
     Début : « La chasse est ouverte » (sinon le début de la vidéo). Fin : « Résumé de mission »,
@@ -262,49 +303,157 @@ def build_matches(events: list[dict], duration: float, budget: float = 75.0) -> 
         outcome = "extracted" if extracted else ("dead" if dead else "unknown")
         if extracted:
             stop = min(stop, extracted["t"] + 4)
-        chapters = _chapters([e for e in inside if e["t"] <= stop], budget)
-        matches.append({
+        inside = [e for e in inside if e["t"] <= stop]
+        chapters = build_chapters(inside, s, stop, outcome, preset)
+        match = {
             "id": len(matches), "start": round(s, 2), "end": round(stop, 2), "outcome": outcome,
             "clues": sum(1 for e in inside if e["type"] == "clue"),
-            "fights": sum(1 for e in inside if e["type"] == "pvp_fight"),
+            "fights": sum(1 for c in chapters if c["type"] in ("confrontation", "kill")),
+            "kills": sum(1 for c in chapters if c["type"] == "kill"),
             "bounty": any(e["type"] == "bounty" for e in inside),
+            "boss": any(e["type"] == "boss_down" for e in inside),
             "chapters": chapters,
-        })
+        }
+        match["potential"] = match_potential(match)
+        # une partie mérite un résumé si on la gagne ou si on y fait plusieurs kills
+        match["worth"] = outcome == "extracted" or match["kills"] >= 2
+        matches.append(match)
     return matches
 
 
-def _chapters(events: list[dict], budget: float) -> list[dict]:
-    picks = []
-    for e in events:
-        if e["type"] not in CHAPTERS:
-            continue
-        before, after, prio = CHAPTERS[e["type"]]
-        if before is None:  # combat : du premier tir au cri, plafonné (les temps morts seront accélérés)
-            before = min(14.0, max(4.0, e.get("before", 6) - 2))
-        picks.append({"type": e["type"], "label": CHAPTER_LABELS[e["type"]], "t": e["t"], "prio": prio,
-                      "start": round(max(0.0, e["t"] - before), 2), "end": round(e["t"] + after, 2), "score": e["score"]})
-    # indices : trois au plus, les premiers trouvés
-    clues = [c for c in picks if c["type"] == "clue"]
-    shots = sorted((c for c in picks if c["type"] == "gunfight"), key=lambda c: -c["score"])
-    picks = [c for c in picks if c["type"] not in ("clue", "gunfight")] + clues[:3] + shots[:3]
-    # mort et combat qui se recouvrent : on garde le combat, qui la contient
+def match_potential(m: dict) -> int:
+    """Potentiel 0-100 d'un résumé : une victoire avec des kills et la prime, c'est ce qui se partage."""
+    score = (35 if m["outcome"] == "extracted" else 0) + 15 * min(m["kills"], 4) + 12 * m["bounty"]         + 8 * m["boss"] + 4 * min(m["fights"], 4) + 2 * min(m["clues"], 3)
+    return int(min(100, score))
+
+
+def _fights(events: list[dict], boss_window: tuple[float, float] | None) -> list[dict]:
+    """Confrontations : rafales de tirs (≥ 3 tirs, écarts < 15 s) hors combat de boss, ou
+    tirs autour d'un cri de mort de chasseur / d'une touche sur un joueur.
+
+    Les monstres ne crient pas comme un chasseur : un cri dans la rafale = joueur abattu.
+    """
+    shots = sorted(e["t"] for e in events if e["type"] in ("gunfight", "player_hit"))
+    cries = sorted(e["t"] for e in events if e["type"] in ("death_cry", "pvp_fight"))
+    groups: list[list[float]] = []
+    for s in shots:
+        if groups and s - groups[-1][-1] < 15:
+            groups[-1].append(s)
+        else:
+            groups.append([s])
+    out = []
+    for g in groups:
+        a, b = g[0], g[-1]
+        kills = [c for c in cries if a - 10 <= c <= b + 8]
+        in_boss = boss_window and boss_window[0] - 5 <= a and b <= boss_window[1] + 5
+        if kills or (len(g) >= 3 and not in_boss):
+            out.append({"start": a, "end": max(b, *kills) if kills else b, "shots": len(g), "kills": kills})
+    return out
+
+
+def build_chapters(events: list[dict], m_start: float, m_end: float, outcome: str, preset: str = "recit") -> list[dict]:
+    p = PRESETS.get(preset, PRESETS["recit"])
+    first = lambda kind: next((e for e in events if e["type"] == kind), None)  # noqa: E731
+    found, down, bounty = first("boss_found"), first("boss_down"), first("bounty")
+    extracted, death = first("extracted"), first("death")
+    picks: list[dict] = []
+
+    def add(kind: str, label: str, t: float, before: float, after: float, prio: int, score: float = 10, **extra):
+        picks.append({"type": kind, "label": label, "t": round(t, 2), "prio": prio, "score": score,
+                      "start": round(max(m_start, t - before), 2), "end": round(min(m_end, t + after), 2), **extra})
+
+    clues = [e for e in events if e["type"] == "clue"][: p["max_clues"]]
+    for i, e in enumerate(clues):
+        label = f"{ORDINALS[min(i, 5)]} indice"
+        if e.get("clue_count"):  # « 1/3 » lu sous « Indice trouvé », et le boss concerné si on le connaît
+            label += f" · {e['clue_count']}"
+        if e.get("boss_name"):
+            label += f" · {e['boss_name']}"
+        add("clue", label, e["t"], *p["clue"], prio=2, score=30)  # avant les fusillades
+    if found:
+        add("boss_found", "Boss trouvé", found["t"], *p["boss_found"], prio=2)
+    if down:
+        add("boss_down", "Boss tué", down["t"], *p["boss_down"], prio=1)
+    if bounty:
+        add("bounty", "Prime récupérée", bounty["t"], *p["bounty"], prio=1)
+    boss_window = (found["t"], down["t"]) if found and down else None
+    for f in _fights(events, boss_window):
+        pad_b, pad_a = p["fight_pad"]
+        length = min(p["fight_max"], f["end"] - f["start"] + pad_b + pad_a)
+        if f["kills"]:
+            for k in f["kills"]:
+                add("kill", "Ennemi tué", k, min(length, 12), 3, prio=1, score=15, shots=f["shots"])
+        else:
+            add("confrontation", "Confrontation", f["start"] + (f["end"] - f["start"]) / 2,
+                length / 2, length / 2, prio=2, score=8 + f["shots"], shots=f["shots"])
+    if extracted:
+        add("extracted", "Extraction réussie", extracted["t"], *p["extract"], prio=1, score=12)
+    elif death:
+        add("death", "Mort au combat", death["t"], *p["death"], prio=1, score=10)
+
+    # chevauchements : on fusionne dans le chapitre le plus important, en gardant son titre
     picks.sort(key=lambda c: (c["prio"], -c["score"]))
     kept: list[dict] = []
     total = 0.0
     for c in picks:
-        if any(c["start"] < k["end"] and c["end"] > k["start"] for k in kept):
+        clash = next((k for k in kept if c["start"] < k["end"] and c["end"] > k["start"]), None)
+        if clash:
+            clash["start"], clash["end"] = min(clash["start"], c["start"]), max(clash["end"], c["end"])
+            clash.setdefault("also", []).append(c["label"])
             continue
         length = c["end"] - c["start"]
-        if total + length > budget and c["prio"] > 1:
+        if total + length > p["budget"] and c["prio"] > 1:
             continue
         kept.append(c)
         total += length
     kept.sort(key=lambda c: c["t"])
-    n_clues = sum(1 for c in kept if c["type"] == "clue")
-    k = 0
     for c in kept:
-        if c["type"] == "clue":
-            k += 1
-            c["label"] = f"Indice {k}/{n_clues}" if n_clues > 1 else "Indice"
         c.pop("prio")
     return kept
+
+
+BOSS_NAMES = {"boucher": "Boucher", "butcher": "Boucher", "araignee": "Araignée", "spider": "Araignée",
+              "assassin": "Assassin", "scrapbeak": "Scrapbeak", "rotjaw": "Rotjaw", "hellborn": "Hellborn"}
+
+
+def enrich_clues(events: list[dict], ocr_lines: list[dict], matches: list[dict]) -> None:
+    """Relie chaque indice à son compteur (« 1/3 », lu sous « Indice trouvé ») et à son boss.
+
+    Avec deux boss, le compteur repart à 1/3 pour le second : chaque retour à un nombre plus
+    petit fait passer au boss suivant. Les noms viennent du panneau d'objectifs (« Boucher »),
+    dans l'ordre où ils apparaissent dans la partie.
+    """
+    import re as _re
+
+    from .cues.visual import norm
+
+    for m in matches:
+        names: list[str] = []
+        for fr in ocr_lines:
+            if m["start"] <= fr["t"] <= m["end"]:
+                for x, y, txt in fr["items"]:
+                    n = norm(txt).strip()
+                    for key, name in BOSS_NAMES.items():
+                        if x < 0.35 and y < 0.45 and n.startswith(key[:5]) and name not in names:
+                            names.append(name)
+        boss_idx, last = 0, 0
+        clues = sorted((e for e in events if e["type"] == "clue" and m["start"] <= e["t"] <= m["end"]), key=lambda e: e["t"])
+        # un seul nom lu mais plus de 3 indices : il y avait 2 boss, on ne devine pas lequel
+        single_name = names[0] if len(names) == 1 and len(clues) <= 3 else None
+        for e in clues:
+            count = None
+            for fr in ocr_lines:
+                if e["t"] - 2 <= fr["t"] <= e["t"] + 3:
+                    for x, y, txt in fr["items"]:
+                        hit = _re.fullmatch(r"\s*([123])\s*/\s*3\s*", txt)
+                        if x < 0.3 and y < 0.35 and hit:
+                            count = int(hit.group(1))
+            if count:
+                if count <= last:
+                    boss_idx += 1  # le compteur repart : on est passé au 2e boss
+                last = count
+                e["clue_count"] = f"{count}/3"
+            if single_name:
+                e["boss_name"] = single_name
+            elif count and boss_idx < len(names):
+                e["boss_name"] = names[boss_idx]

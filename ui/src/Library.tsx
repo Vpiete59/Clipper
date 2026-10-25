@@ -1,10 +1,11 @@
 import {
   ArrowRight, CheckCircle, Clock, DeviceMobile, FilmStrip, Lightning, MagnifyingGlass, Play, Plus,
-  Sparkle, Tray, VideoCamera, Warning,
+  Sparkle, Trash, Tray, VideoCamera, Warning,
 } from '@phosphor-icons/react'
 import { useEffect, useMemo, useState } from 'react'
 import { BUSY } from './App'
 import { api, fmtSize, fmtTime, STAGE_LABEL, STATUS_LABEL, type Game, type InboxFile, type Video } from './api'
+import ConfirmDialog from './ConfirmDialog'
 import { Spinner, useToast } from './ui'
 
 type Filter = 'all' | 'busy' | 'done'
@@ -15,6 +16,8 @@ export default function Library({ videos, games, onOpen }: { videos: Video[] | n
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [importing, setImporting] = useState<string | null>(null)
+  const [toDelete, setToDelete] = useState<Video | null>(null)
+  const [inboxDelete, setInboxDelete] = useState<InboxFile | null>(null)
   const toast = useToast()
   const list = useMemo(() => videos ?? [], [videos])
 
@@ -101,7 +104,15 @@ export default function Library({ videos, games, onOpen }: { videos: Video[] | n
             <div className="card empty"><p>Aucune vidéo ne correspond.</p></div>
           ) : (
             <div className="grid">
-              {shown.map((v, i) => <VideoCard key={v.id} v={v} index={i} game={gameName(v.game)} onOpen={() => onOpen(v.id)} />)}
+              {shown.map((v, i) => (
+                <div key={v.id} className="vcard-wrap">
+                  <VideoCard v={v} index={i} game={gameName(v.game)} onOpen={() => onOpen(v.id)} />
+                  <button className="btn sm icon vcard-del" onClick={() => setToDelete(v)} disabled={BUSY.includes(v.status)}
+                    aria-label={`Supprimer ${v.name}`} title={BUSY.includes(v.status) ? 'En cours de traitement' : 'Supprimer'}>
+                    <Trash size={15} weight="fill" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </>
@@ -115,11 +126,48 @@ export default function Library({ videos, games, onOpen }: { videos: Video[] | n
             <span className="faint">{inbox.length} enregistrement{inbox.length > 1 ? 's' : ''} pas encore analysé{inbox.length > 1 ? 's' : ''}</span>
           </div>
           <div className="card inbox-list">
-            {inbox.slice(0, 12).map(f => <InboxRow key={f.path} f={f} games={games} busy={importing === f.path} onImport={g => importPath(f.path, g)} />)}
+            {inbox.slice(0, 12).map(f => <InboxRow key={f.path} f={f} games={games} busy={importing === f.path}
+              onImport={g => importPath(f.path, g)} onDelete={() => setInboxDelete(f)} />)}
           </div>
         </section>
       )}
+
+      {toDelete && (
+        <DeleteVideoDialog v={toDelete} onClose={() => setToDelete(null)} onDone={msg => { setToDelete(null); toast(msg, 'success'); loadInbox() }} />
+      )}
+      {inboxDelete && (
+        <ConfirmDialog title="Supprimer l'enregistrement" confirmLabel="Mettre à la corbeille" onClose={() => setInboxDelete(null)}
+          onConfirm={async () => {
+            try {
+              await api.deleteInbox(inboxDelete.path)
+              toast(`${inboxDelete.name} mis à la corbeille`, 'success')
+              setInboxDelete(null)
+              loadInbox()
+            } catch (e) { toast((e as Error).message, 'error') }
+          }}>
+          <p><b style={{ color: 'var(--text)' }}>{inboxDelete.name}</b> ({fmtSize(inboxDelete.size)}) n'a pas encore été analysé.</p>
+        </ConfirmDialog>
+      )}
     </div>
+  )
+}
+
+export function DeleteVideoDialog({ v, onClose, onDone }: { v: Video; onClose: () => void; onDone: (msg: string) => void }) {
+  const toast = useToast()
+  return (
+    <ConfirmDialog title="Supprimer la vidéo" confirmLabel="Supprimer" onClose={onClose}
+      options={[
+        { key: 'source', label: 'Vidéo source', hint: `${fmtSize(v.size)} · l'enregistrement OBS d'origine`, defaultChecked: true },
+        { key: 'clips', label: 'Clips et résumés rendus', hint: 'Tous les fichiers produits à partir de cette vidéo', defaultChecked: true },
+      ]}
+      onConfirm={async ({ source, clips }) => {
+        try {
+          const r = await api.deleteVideo(v.id, source, clips)
+          onDone(r.trashed.length ? `${r.trashed.length} fichier${r.trashed.length > 1 ? 's' : ''} mis à la corbeille` : 'Vidéo retirée de la bibliothèque')
+        } catch (e) { toast((e as Error).message, 'error') }
+      }}>
+      <p><b style={{ color: 'var(--text)' }}>{v.name}</b> sera retirée de la bibliothèque. Choisis ce qui part aussi à la corbeille :</p>
+    </ConfirmDialog>
   )
 }
 
@@ -182,7 +230,9 @@ function VideoCard({ v, index, game, onOpen }: { v: Video; index: number; game: 
   )
 }
 
-function InboxRow({ f, games, busy, onImport }: { f: InboxFile; games: Game[]; busy: boolean; onImport: (game: string) => void }) {
+function InboxRow({ f, games, busy, onImport, onDelete }: {
+  f: InboxFile; games: Game[]; busy: boolean; onImport: (game: string) => void; onDelete: () => void
+}) {
   // la liste des jeux arrive après le premier rendu : on ne fige pas le défaut dans l'état
   const [picked, setGame] = useState<string | null>(null)
   const game = picked ?? games.find(g => g.id === 'hunt_showdown')?.id ?? games[0]?.id ?? 'generic'
@@ -198,6 +248,9 @@ function InboxRow({ f, games, busy, onImport }: { f: InboxFile; games: Game[]; b
         </select>
         <button className="btn sm" disabled={busy} onClick={() => onImport(game)}>
           {busy ? <Spinner /> : <Sparkle size={14} weight="fill" aria-hidden />} Analyser
+        </button>
+        <button className="btn sm icon danger" onClick={onDelete} aria-label={`Mettre ${f.name} à la corbeille`} title="Mettre à la corbeille">
+          <Trash size={14} />
         </button>
       </div>
     </div>

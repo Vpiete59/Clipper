@@ -1,7 +1,9 @@
 import {
-  ArrowCounterClockwise, ArrowLeft, Ear, FlagCheckered, ArrowSquareOut, Check, CheckCircle, ClosedCaptioning, DeviceMobile,
-  Eye, EyeSlash, FilmStrip, FolderOpen, Lightning, PaperPlaneTilt, Pause, Play, Plus, Quotes, Sparkle, Star, Warning,
+  ArrowCounterClockwise, ArrowLeft, Ear, PencilSimple, X, FlagCheckered, ArrowSquareOut, Check, CheckCircle, ClosedCaptioning, DeviceMobile,
+  Eye, EyeSlash, FilmStrip, FolderOpen, Lightning, PaperPlaneTilt, Trash, Pause, Play, Plus, Quotes, Sparkle, Star, Warning,
 } from '@phosphor-icons/react'
+import ConfirmDialog from './ConfirmDialog'
+import { DeleteVideoDialog } from './Library'
 import PublishDialog, { PLATFORM_META } from './PublishDialog'
 import SoundsTab from './SoundsTab'
 import MatchesTab from './MatchesTab'
@@ -15,8 +17,8 @@ const STAGES: [string, number, number][] = [
 ]
 const SIGNALS: [string, string][] = [['gunshot', '#ff6b5e'], ['loudness_spike', '#6b6b76'], ['speech_excited', '#b98cff'], ['laughter', '#f78fc5']]
 
-const KIND_ORDER: Record<string, number> = { story: 0, montage: 1, clip: 2 }
-const renderLabel = (r: Render) => r.kind === 'story' ? `Résumé partie ${(r.moment_id ?? 0) + 1}` : r.kind === 'montage' ? 'Montage' : `Clip #${r.moment_id}`
+const KIND_ORDER: Record<string, number> = { longform: 0, story: 1, montage: 2, clip: 3 }
+const renderLabel = (r: Render) => r.kind === 'longform' ? `YouTube partie ${(r.moment_id ?? 0) + 1}` : r.kind === 'story' ? `Résumé partie ${(r.moment_id ?? 0) + 1}` : r.kind === 'montage' ? 'Montage' : `Clip #${r.moment_id}`
 
 // élisions et ponctuation découpées par Whisper : collées au mot précédent, comme dans le rendu
 const GLUE = /^['’\-.,!?…)]/
@@ -32,6 +34,8 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
   const [active, setActive] = useState<number | null>(null)
   const [tab, setTab] = useState<'matches' | 'moments' | 'subs' | 'sounds'>('matches')
   const [publishing, setPublishing] = useState<Render | null>(null)
+  const [deletingVideo, setDeletingVideo] = useState(false)
+  const [deletingRender, setDeletingRender] = useState<Render | null>(null)
   const player = useRef<HTMLVideoElement>(null)
   const loopEnd = useRef<number | null>(null)
   const toast = useToast()
@@ -41,7 +45,8 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
   }), [id])
   useEffect(() => { load() }, [load, summary?.status, summary?.n_moments])
 
-  const v = summary ?? video
+  // le nom vient de la fiche détaillée : il change dès le renommage, sans attendre le rafraîchissement de la liste
+  const v = summary && video ? { ...summary, name: video.name } : summary ?? video
   const duration = analysis?.duration ?? v?.duration ?? 1
 
   const seek = useCallback((t: number, until?: number, play = true) => {
@@ -103,7 +108,10 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
       <div className="editor-head">
         <button className="btn icon ghost" onClick={onBack} aria-label="Retour à la bibliothèque" title="Retour"><ArrowLeft size={20} /></button>
         <div className="grow" style={{ minWidth: 0 }}>
-          <h1 className="editor-title ellipsis" title={v.name}>{v.name}</h1>
+          <EditableTitle name={v.name} onSave={async name => {
+            try { await api.renameVideo(id, name); await load(); toast('Vidéo renommée', 'success') }
+            catch (e) { toast((e as Error).message, 'error') }
+          }} />
           <div className="editor-meta">
             <span className="mono">{fmtTime(duration)}</span>
             {portrait && <span className="row" style={{ gap: 4 }}><DeviceMobile size={13} aria-hidden /> Source verticale</span>}
@@ -117,6 +125,8 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
         }}>
           {games.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
         </select>
+        <button className="btn icon danger" disabled={busy} onClick={() => setDeletingVideo(true)}
+          aria-label="Supprimer cette vidéo" title={busy ? 'En cours de traitement' : 'Supprimer cette vidéo'}><Trash size={17} /></button>
         <button className="btn" disabled={busy} onClick={() => api.analyze(id).then(() => toast('Analyse relancée'))}>
           <ArrowCounterClockwise size={16} aria-hidden /> {analysis ? 'Ré-analyser' : 'Analyser'}
         </button>
@@ -126,7 +136,7 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
         </button>
       </div>
 
-      {busy && <Progress v={v} />}
+      {busy && <Progress v={v} onCancel={() => api.unqueue(id).then(() => toast(v.status.endsWith('queued') ? 'Retirée de la file' : 'Traitement annulé', 'success'))} />}
       {v.status === 'error' && (
         <div className="card stepper" style={{ borderColor: 'rgba(242,85,90,0.4)' }} role="alert">
           <div className="row" style={{ color: 'var(--danger)', fontWeight: 600 }}><Warning size={18} weight="fill" aria-hidden /> Le traitement a échoué</div>
@@ -176,7 +186,7 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
               </div>
               <div className="clips">
                 {[...renders].sort((a, b) => (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9) || (a.moment_id ?? 0) - (b.moment_id ?? 0)).map((r, i) => (
-                  <div key={r.id} className={`card clip ${r.kind !== 'clip' ? 'montage' : ''}`} style={{ animationDelay: `${i * 40}ms` }}>
+                  <div key={r.id} className={`card clip ${r.kind !== 'clip' ? 'montage' : ''} ${r.kind === 'longform' ? 'longform' : ''}`} style={{ animationDelay: `${i * 40}ms` }}>
                     <video src={`${fileUrl(r.path)}&v=${r.created_at}`} controls preload="metadata" />
                     <div className="clip-foot">
                       {r.kind === 'clip' ? <>Clip #{r.moment_id}</> : <><Star size={15} weight="fill" color="var(--accent)" aria-hidden /> {renderLabel(r)}</>}
@@ -195,6 +205,9 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
                       </button>
                       <button className="btn sm icon" onClick={() => api.reveal(r.path)} aria-label="Afficher dans l'Explorateur" title="Afficher dans l'Explorateur">
                         <ArrowSquareOut size={15} />
+                      </button>
+                      <button className="btn sm icon danger" onClick={() => setDeletingRender(r)} aria-label={`Supprimer ${renderLabel(r)}`} title="Supprimer ce clip">
+                        <Trash size={15} />
                       </button>
                     </div>
                   </div>
@@ -229,7 +242,8 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
               <p className="faint" style={{ padding: 8 }}>Les moments forts et les sous-titres apparaîtront ici après l'analyse.</p>
             ) : tab === 'matches' ? (
               <MatchesTab analysis={analysis} renders={renders} busy={busy} onSeek={(t, until) => seek(t, until)}
-                onRender={mid => api.render(id, null, false, [mid]).then(() => toast(`Résumé de la partie ${mid + 1} lancé`, 'success'))} />
+                onRender={mid => api.render(id, null, false, [mid]).then(() => toast(`Résumé de la partie ${mid + 1} lancé`, 'success'))}
+                onLongform={mid => api.render(id, null, false, [mid], true).then(() => toast(`Vidéo YouTube de la partie ${mid + 1} lancée`, 'success'))} />
             ) : tab === 'moments' ? (
               analysis.moments.length === 0 ? (
                 <div className="empty" style={{ padding: '32px 12px' }}>
@@ -253,6 +267,22 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
           </div>
         </aside>
       </div>
+      {deletingVideo && (
+        <DeleteVideoDialog v={v} onClose={() => setDeletingVideo(false)} onDone={msg => { toast(msg, 'success'); onBack() }} />
+      )}
+      {deletingRender && (
+        <ConfirmDialog title="Supprimer le clip" confirmLabel="Mettre à la corbeille" onClose={() => setDeletingRender(null)}
+          onConfirm={async () => {
+            try {
+              await api.deleteRender(deletingRender.path)
+              toast(`${renderLabel(deletingRender)} mis à la corbeille`, 'success')
+              setDeletingRender(null)
+              load()
+            } catch (e) { toast((e as Error).message, 'error') }
+          }}>
+          <p><b style={{ color: 'var(--text)' }}>{renderLabel(deletingRender)}</b> et ses sous-titres seront supprimés. Le moment reste dans la liste : tu pourras le re-rendre.</p>
+        </ConfirmDialog>
+      )}
       {publishing && (
         <PublishDialog render={publishing} onClose={() => { setPublishing(null); load() }}
           label={renderLabel(publishing)} />
@@ -261,18 +291,23 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
   )
 }
 
-function Progress({ v }: { v: Video }) {
+function Progress({ v, onCancel }: { v: Video; onCancel: () => void }) {
+  const cancel = (
+    <button className="btn sm danger" onClick={onCancel}>
+      <X size={14} weight="bold" aria-hidden /> {v.status.endsWith('queued') ? 'Retirer de la file' : 'Annuler'}
+    </button>
+  )
   if (v.status === 'rendering' || v.status === 'rendering_queued') {
     return (
       <div className="card stepper" aria-live="polite">
-        <div className="row"><Spinner size={16} /><strong>{v.stage === 'montage' ? 'Assemblage du montage' : 'Rendu des clips verticaux'}</strong><span className="grow" /><span className="mono faint">{Math.round(v.progress * 100)} %</span></div>
+        <div className="row"><Spinner size={16} /><strong>{v.stage === 'montage' ? 'Assemblage du montage' : 'Rendu des clips verticaux'}</strong><span className="grow" /><span className="mono faint">{Math.round(v.progress * 100)} %</span>{cancel}</div>
         <div className="progress" style={{ marginTop: 12 }}><div style={{ width: `${v.progress * 100}%` }} /></div>
       </div>
     )
   }
   return (
     <div className="card stepper" aria-live="polite">
-      <div className="row"><Spinner size={16} /><strong>{v.status === 'queued' ? 'En file d\'attente' : 'Analyse en cours'}</strong><span className="grow" /><span className="mono faint">{Math.round(v.progress * 100)} %</span></div>
+      <div className="row"><Spinner size={16} /><strong>{v.status === 'queued' ? 'En file d\'attente' : 'Analyse en cours'}</strong><span className="grow" /><span className="mono faint">{Math.round(v.progress * 100)} %</span>{cancel}</div>
       <div className="stepper-steps">
         {STAGES.map(([key, a, b]) => {
           const p = Math.max(0, Math.min(1, (v.progress - a) / (b - a)))
@@ -492,5 +527,33 @@ function Subtitles({ analysis, time, onSeek, onEdit }: {
         ))}
       </div>
     </>
+  )
+}
+
+/** Titre de la vidéo, cliquable pour le renommer (Entrée valide, Échap annule). */
+function EditableTitle({ name, onSave }: { name: string; onSave: (name: string) => Promise<void> }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(name)
+  useEffect(() => { if (!editing) setDraft(name) }, [name, editing])
+  if (editing) {
+    const commit = async () => {
+      setEditing(false)
+      if (draft.trim() && draft.trim() !== name) await onSave(draft.trim())
+    }
+    return (
+      <input className="input title-input" autoFocus value={draft} aria-label="Nom de la vidéo" maxLength={120}
+        onChange={e => setDraft(e.target.value)} onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') { setDraft(name); setEditing(false) }
+        }} />
+    )
+  }
+  return (
+    <button className="title-btn" onClick={() => setEditing(true)} title="Renommer la vidéo">
+      <h1 className="editor-title ellipsis">{name}</h1>
+      <PencilSimple size={18} className="title-pen" aria-hidden />
+      <span className="sr-only">Renommer</span>
+    </button>
   )
 }

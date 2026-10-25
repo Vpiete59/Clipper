@@ -1,4 +1,4 @@
-import { ClosedCaptioning, DeviceMobile, FolderOpen, MagicWand, PaperPlaneTilt, Plus, Target, Trash, VideoCamera } from '@phosphor-icons/react'
+import { ClosedCaptioning, DeviceMobile, FilmReel, FolderOpen, MagicWand, PaperPlaneTilt, Plus, Target, Trash, VideoCamera } from '@phosphor-icons/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type Game, type Settings } from './api'
 import { Switch, useToast } from './ui'
@@ -29,6 +29,7 @@ const SECTIONS: [string, string, ReactNode][] = [
   ['detect', 'Détection', <Target size={17} aria-hidden />],
   ['subs', 'Sous-titres', <ClosedCaptioning size={17} aria-hidden />],
   ['format', 'Format & effets', <MagicWand size={17} aria-hidden />],
+  ['stories', 'Résumés', <FilmReel size={17} aria-hidden />],
   ['publish', 'Publication', <PaperPlaneTilt size={17} aria-hidden />],
 ]
 
@@ -84,6 +85,9 @@ export default function SettingsPage({ games }: { games: Game[] }) {
                 <Switch checked={s.auto_process} onChange={v => save({ auto_process: v })}
                   label="Traitement automatique" hint="Analyser puis rendre les clips dès qu'un enregistrement se termine" />
               </div>
+              <NumberField id="min-auto" label="Durée minimale pour le traitement auto (s)" value={s.auto_min_duration} min={0} max={3600}
+                onChange={num('auto_min_duration')}
+                hint="Les vidéos plus courtes (extraits, vidéos Kinevir…) restent dans « Dans tes dossiers OBS » sans être analysées. Tu peux toujours les lancer à la main." />
               <div>
                 <label className="field-label" htmlFor="default-game">Jeu par défaut</label>
                 <select id="default-game" className="select" value={s.default_game} onChange={e => save({ default_game: e.target.value })}>
@@ -186,6 +190,32 @@ export default function SettingsPage({ games }: { games: Game[] }) {
               {EFFECTS.map(([k, label, hint]) => (
                 <Switch key={k} checked={!!s.effects[k]} label={label} hint={hint} onChange={v => save({ effects: { ...s.effects, [k]: v } })} />
               ))}
+            </div>
+          </Section>
+
+          <Section id="stories" icon={<FilmReel size={20} />} title="Résumés de partie" desc="Le short qui raconte une partie, de l'indice à la sortie.">
+            <div className="fgrid">
+              <div className="full">
+                <span className="field-label">Rythme</span>
+                <div className="segmented" role="radiogroup" aria-label="Rythme des résumés">
+                  {([['recit', 'Récit (~2 min)'], ['action', 'Action (~1 min 45)'], ['express', 'Express (~1 min 30)']] as const).map(([k, l]) => (
+                    <button key={k} role="radio" aria-selected={s.story_preset === k} onClick={() => save({ story_preset: k })}>{l}</button>
+                  ))}
+                </div>
+                <div className="hint">S'applique aux prochaines analyses, ou à « Ré-analyser ».</div>
+              </div>
+              <div className="full">
+                <span className="field-label">Titres des chapitres</span>
+                <div className="segmented" role="radiogroup" aria-label="Style des titres">
+                  {([['center', 'Gros titre au centre'], ['hunt', 'Façon Hunt (doré)'], ['banner', 'Bandeau jaune']] as const).map(([k, l]) => (
+                    <button key={k} role="radio" aria-selected={s.title_style === k} onClick={() => save({ title_style: k })}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="full">
+                <Switch checked={s.story_only_worth} onChange={v => save({ story_only_worth: v })}
+                  label="Résumés automatiques seulement pour les bonnes parties" hint="Extraction réussie, ou au moins 2 kills. Les autres restent disponibles à la main." />
+              </div>
             </div>
           </Section>
 

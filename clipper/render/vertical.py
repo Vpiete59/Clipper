@@ -145,8 +145,12 @@ def render_clip(
     hook: str | None = None,
     fps: float = 60,
     quiet: list[bool] | None = None,
+    title_style: str = "banner",
+    kills: dict | None = None,
+    emphasis: set[str] | None = None,
 ) -> Path:
-    """`quiet` : passages calmes (un booléen par 0,5 s depuis le début du moment) à accélérer."""
+    """`quiet` : passages calmes (un booléen par 0,5 s depuis le début du moment) à accélérer.
+    `kills` : {"base": kills déjà faits, "times": [instants source]} pour le compteur à l'écran."""
     effects = effects or {}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     start, end = moment["start"], moment["end"]
@@ -198,7 +202,10 @@ def render_clip(
     words = [w for seg in segments for w in seg["words"] if start - 0.05 <= w["start"] < end]
     ass_path.write_text(
         build_ass(words, out_dur, remap, subtitle_style, subtitle_y,
-                  hook if effects.get("hook_title") else None),
+                  hook if effects.get("hook_title") else None, title_style=title_style,
+                  counter=kills and {"base": kills["base"],
+                                     "times": [remap(x) for x in kills["times"] if start <= x <= end]},
+                  emphasis=emphasis),
         encoding="utf-8-sig",
     )
     post.append(f"subtitles={ass_path.name}")

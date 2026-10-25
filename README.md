@@ -39,8 +39,17 @@ uv run python -m clipper.cli render "D:\Streaming\partie.mkv" --game hunt_showdo
 | Fusion → moments | scores, combos, combats JcJ (cri + tirs), alignement sur les phrases | `clipper/scoring.py` |
 | Parties | début « La chasse est ouverte », fin « Résumé de mission » ; chapitres du résumé | `clipper/scoring.py` |
 | Rendu 9:16 | NVENC : teaser, ralenti, accélération des temps morts, zoom, tremblement, flash, sons d'impact, sous-titres animés | `clipper/render/vertical.py` |
-| Résumé de partie | cold open, chapitres titrés, whoosh, barre de progression | `clipper/render/story.py` |
+| Chat Twitch | export TwitchDownloader posé à côté de la VOD : pics de messages = moments forts | `clipper/cues/chat.py` |
+| Résumé de partie (short) | chapitres titrés (indices, boss trouvé/tué, prime, confrontations, kills, extraction), compteur de kills, whoosh | `clipper/render/story.py` |
+| Vidéo longue YouTube | partie en 16:9, chapitres YouTube, .srt, miniature | `clipper/render/longform.py` |
 | Publication | textes par plateforme, ouverture de la page d'upload, suivi | `clipper/publish.py` |
+
+## Chat Twitch (optionnel)
+
+Télécharge le chat de ta VOD avec [TwitchDownloader](https://github.com/lay295/TwitchDownloader)
+(« Chat Download », format JSON) et pose le fichier à côté de la vidéo, avec le même nom
+(`ma-vod.json` pour `ma-vod.mp4`) ou un nom contenant « chat ». Clipper le lit au prochain
+recalcul : les pics de messages deviennent des moments « Le chat s'enflamme ».
 
 ## Ajouter un jeu
 

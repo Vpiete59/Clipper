@@ -10,7 +10,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from . import jobs, library, pipeline
+from . import jobs, library, media, pipeline
 from .config import Settings
 
 VIDEO_EXT = {".mkv", ".mp4", ".mov", ".flv"}
@@ -31,9 +31,20 @@ def _is_finished(path: Path, quiet_s: float = 8.0) -> bool:
         return False
 
 
+def too_short(path: Path, settings: Settings) -> bool:
+    try:
+        return media.probe(path).duration < settings.auto_min_duration
+    except Exception:  # illisible pour l'instant : on laisse la main à l'utilisateur
+        return True
+
+
 def register(path: Path, auto: bool | None = None) -> dict | None:
+    """`auto=None` : appel de la surveillance OBS. Les vidéos courtes (extraits, Kinevir…)
+    restent alors dans « Dans tes dossiers OBS » sans être ajoutées ni analysées."""
     settings = Settings.load()
     if path.suffix.lower() not in VIDEO_EXT or not path.exists():
+        return None
+    if auto is None and too_short(path, settings):
         return None
     vid = pipeline.video_id(path)
     existing = library.get_video(vid)

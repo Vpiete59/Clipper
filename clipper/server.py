@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 
 import numpy as np
 
-from . import games, jobs, library, media, pipeline, publish, sounds, watcher
+from . import games, jobs, library, media, pipeline, publish, sounds, trash, watcher
 from .cues import STEP, audio
 from .config import UI_DIST, Settings
 from .render.subtitles import join_words
@@ -51,6 +52,34 @@ def put_settings(patch: dict):
 @app.get("/api/games")
 def get_games():
     return games.list_games()
+
+
+# ---------- file de tâches
+
+@app.get("/api/queue")
+def get_queue():
+    return jobs.snapshot()
+
+
+class PauseBody(BaseModel):
+    paused: bool
+
+
+@app.post("/api/queue/pause")
+def pause_queue(body: PauseBody):
+    jobs.set_paused(body.paused)
+    return jobs.snapshot()
+
+
+@app.delete("/api/queue/{vid}")
+def unqueue(vid: str):
+    """Retire la vidéo de la file, ou annule son traitement s'il est en cours."""
+    return {"removed": jobs.remove(vid), "queue": jobs.snapshot()}
+
+
+@app.delete("/api/queue")
+def clear_queue():
+    return {"cleared": jobs.clear(), "queue": jobs.snapshot()}
 
 
 # ---------- bibliothèque
@@ -101,9 +130,57 @@ def get_video(vid: str):
     return {"video": v, "analysis": pipeline.load_analysis(vid), "renders": library.list_renders(vid)}
 
 
+class VideoPatch(BaseModel):
+    name: str
+
+
+@app.patch("/api/videos/{vid}")
+def rename_video(vid: str, body: VideoPatch):
+    """Nom affiché dans Clipper (le fichier source n'est pas renommé). Les prochains rendus
+    iront dans un dossier à ce nom ; les clips déjà rendus restent où ils sont."""
+    _video_or_404(vid)
+    # le nom sert aussi de dossier de sortie : « : » devient « - », les autres caractères interdits sautent
+    name = re.sub(r'[<>"/\\|?*\x00-\x1f]', "", body.name.replace(":", " -"))
+    name = re.sub(r"\s+", " ", name).strip().rstrip(".")[:120]
+    if not name:
+        raise HTTPException(400, "Nom vide")
+    library.update_video(vid, name=name)
+    return library.get_video(vid)
+
+
+BUSY = ("queued", "analyzing", "rendering", "rendering_queued")
+
+
 @app.delete("/api/videos/{vid}")
-def delete_video(vid: str):
-    library.delete_video(vid)
+def delete_video(vid: str, source: bool = False, clips: bool = False):
+    """Retire de la bibliothèque ; `source` / `clips` : met aussi les fichiers à la corbeille."""
+    if _video_or_404(vid)["status"] in BUSY:
+        raise HTTPException(409, "Vidéo en cours de traitement : attends la fin avant de la supprimer")
+    try:
+        return trash.delete_video(vid, source, clips)
+    except OSError as exc:
+        raise HTTPException(409, f"Suppression impossible (fichier ouvert ailleurs ?) : {exc}") from exc
+
+
+@app.delete("/api/renders")
+def delete_render(path: str):
+    try:
+        trash.delete_render(path)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(409, f"Suppression impossible (fichier ouvert ailleurs ?) : {exc}") from exc
+    return {"ok": True}
+
+
+@app.delete("/api/inbox")
+def delete_inbox(path: str):
+    try:
+        trash.delete_inbox_file(path)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(409, f"Suppression impossible (OBS enregistre encore ?) : {exc}") from exc
     return {"ok": True}
 
 
@@ -126,7 +203,7 @@ def set_game(vid: str, body: GameBody):
 @app.post("/api/videos/{vid}/analyze")
 def analyze(vid: str):
     _video_or_404(vid)
-    return {"queued": jobs.enqueue("analyze", vid)}
+    return {"queued": jobs.enqueue("analyze", vid, resume=False)}
 
 
 @app.post("/api/videos/{vid}/rescore")
@@ -204,12 +281,14 @@ class RenderBody(BaseModel):
     moment_ids: list[int] | None = None
     montage: bool = False
     match_ids: list[int] | None = None
+    longform: bool = False
 
 
 @app.post("/api/videos/{vid}/render")
 def render(vid: str, body: RenderBody):
     _video_or_404(vid)
-    return {"queued": jobs.enqueue("render", vid, moment_ids=body.moment_ids, montage=body.montage, match_ids=body.match_ids)}
+    return {"queued": jobs.enqueue("render", vid, moment_ids=body.moment_ids, montage=body.montage,
+                                   match_ids=body.match_ids, longform=body.longform)}
 
 
 # ---------- sons appris (cri de mort…)
@@ -267,12 +346,18 @@ def _render_or_404(path: str) -> tuple[dict, dict, dict | None]:
 def get_publish(path: str):
     """Textes proposés (ou déjà retouchés) pour chaque plateforme, plus les limites à respecter."""
     r, analysis, moment = _render_or_404(path)
-    match = next((m for m in analysis.get("matches", []) if m["id"] == r["moment_id"]), None) if r["kind"] == "story" else None
+    match = next((m for m in analysis.get("matches", []) if m["id"] == r["moment_id"]), None)         if r["kind"] in ("story", "longform") else None
+    chapters_file = Path(path).with_name(Path(path).stem + "_chapitres.txt")
     settings = Settings.load()
     saved = library.get_publications(path)
     out = {}
     for key, spec in publish.PLATFORMS.items():
         draft = publish.suggest(analysis, moment, key, settings, match)
+        if r["kind"] == "longform" and key == "youtube":
+            # vidéo longue : pas de #shorts, et les chapitres YouTube dans la description
+            draft["caption"] = draft["caption"].replace("#shorts ", "").replace("#shorts", "")
+            if chapters_file.exists():
+                draft["caption"] += "\n\nChapitres :\n" + chapters_file.read_text(encoding="utf-8").strip()
         pub = saved.get(key, {})
         out[key] = {**spec, "title": pub.get("title") or draft["title"], "caption": pub.get("caption") or draft["caption"],
                     "status": pub.get("status", "draft"), "url": pub.get("url")}

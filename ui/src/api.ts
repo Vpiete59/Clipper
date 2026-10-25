@@ -1,3 +1,4 @@
+export type QueueState = { paused: boolean; running: { vid: string; kind: string } | null; pending: { vid: string; kind: string }[] }
 export type Video = {
   id: string; path: string; name: string; size: number; duration: number | null
   orientation: string | null; game: string; status: string; stage: string | null
@@ -16,7 +17,8 @@ export type Moment = {
 export type Chapter = { type: string; label: string; t: number; start: number; end: number; score: number }
 export type Match = {
   id: number; start: number; end: number; outcome: 'extracted' | 'dead' | 'unknown'
-  clues: number; fights: number; bounty: boolean; chapters: Chapter[]
+  clues: number; fights: number; kills: number; bounty: boolean; boss: boolean; chapters: Chapter[]
+  potential: number; worth: boolean
 }
 export type Analysis = {
   video_id: string; game: string; orientation: string; duration: number; fps: number
@@ -37,11 +39,12 @@ export type Game = { id: string; name: string; description: string; learned_soun
 export type SoundExample = { id: string; game: string; kind: string; video_id: string; video_name: string; t: number; negative: boolean }
 export type InboxFile = { path: string; name: string; size: number; mtime: number }
 export type Settings = {
-  watch_folders: string[]; output_folder: string; auto_process: boolean; default_game: string
+  watch_folders: string[]; output_folder: string; auto_process: boolean; default_game: string; auto_min_duration: number
   language: string; whisper_model: string; audio_track: number; max_clips: number
   clip_min_s: number; clip_max_s: number; min_score: number; subtitle_style: string; subtitle_y: number; subtitle_y_portrait: number
   layout: string; facecam_rect: number[]; effects: Record<string, boolean>; custom_keywords: string[]
   extra_hashtags: string[]; publish_signature: string
+  story_preset: string; title_style: string; story_only_worth: boolean
 }
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -60,16 +63,24 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 export const api = {
   videos: () => req<Video[]>('GET', '/api/videos'),
   inbox: () => req<InboxFile[]>('GET', '/api/inbox'),
+  queue: () => req<QueueState>('GET', '/api/queue'),
+  pauseQueue: (paused: boolean) => req<QueueState>('POST', '/api/queue/pause', { paused }),
+  unqueue: (vid: string) => req('DELETE', `/api/queue/${vid}`),
+  clearQueue: () => req<{ cleared: number }>('DELETE', '/api/queue'),
   video: (id: string) => req<{ video: Video; analysis: Analysis | null; renders: Render[] }>('GET', `/api/videos/${id}`),
   importVideo: (path: string, game?: string) => req<Video>('POST', '/api/videos', { path, game }),
-  deleteVideo: (id: string) => req('DELETE', `/api/videos/${id}`),
+  deleteVideo: (id: string, source: boolean, clips: boolean) =>
+    req<{ trashed: string[] }>('DELETE', `/api/videos/${id}?source=${source}&clips=${clips}`),
+  renameVideo: (id: string, name: string) => req<Video>('PATCH', `/api/videos/${id}`, { name }),
+  deleteRender: (path: string) => req('DELETE', `/api/renders?path=${encodeURIComponent(path)}`),
+  deleteInbox: (path: string) => req('DELETE', `/api/inbox?path=${encodeURIComponent(path)}`),
   analyze: (id: string) => req('POST', `/api/videos/${id}/analyze`),
   setGame: (id: string, game: string) => req<{ needs_reanalyze?: boolean }>('POST', `/api/videos/${id}/game`, { game }),
   patchMoment: (id: string, mid: number, patch: Partial<Moment>) => req<Moment>('PATCH', `/api/videos/${id}/moments/${mid}`, patch),
   addMoment: (id: string, start: number, end: number, hook: string) => req<Analysis>('POST', `/api/videos/${id}/moments`, { start, end, hook }),
   editWord: (id: string, segment: number, word: number, text: string) => req('PUT', `/api/videos/${id}/words`, { segment, word, text }),
-  render: (id: string, moment_ids: number[] | null, montage: boolean, match_ids: number[] | null = null) =>
-    req('POST', `/api/videos/${id}/render`, { moment_ids, montage, match_ids }),
+  render: (id: string, moment_ids: number[] | null, montage: boolean, match_ids: number[] | null = null, longform = false) =>
+    req('POST', `/api/videos/${id}/render`, { moment_ids, montage, match_ids, longform }),
   games: () => req<Game[]>('GET', '/api/games'),
   settings: () => req<Settings>('GET', '/api/settings'),
   saveSettings: (patch: Partial<Settings>) => req<Settings>('PUT', '/api/settings', patch),
@@ -103,7 +114,7 @@ export const STATUS_LABEL: Record<string, string> = {
 
 export const STAGE_LABEL: Record<string, string> = {
   audio: 'Extraction audio', voix: 'Isolation des voix', transcription: 'Transcription', sons: 'Sons', image: 'Lecture du HUD',
-  moments: 'Moments forts', rendu: 'Rendu des clips', montage: 'Montage',
+  moments: 'Moments forts', rendu: 'Rendu des clips', montage: 'Montage', longue: 'Vidéo YouTube',
 }
 
 export const EVENT_COLOR: Record<string, string> = {

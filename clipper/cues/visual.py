@@ -9,6 +9,7 @@ Deux modes, décrits dans le profil de jeu :
 
 from __future__ import annotations
 
+import re
 import threading
 import unicodedata
 from typing import Callable
@@ -48,7 +49,9 @@ def norm(text: str) -> str:
     return "".join(c for c in text if unicodedata.category(c) != "Mn")
 
 
-def _match(text: str, patterns: list[str], threshold: int) -> float:
+def _match(text: str, patterns: list[str], threshold: int, whole: bool = False) -> float:
+    """`whole` : la ligne entière doit ressembler au motif (« Tuer BOUCHER » ≠ « Bannir BOUCHER »),
+    sinon il suffit que le motif apparaisse dans la ligne."""
     best = 0.0
     text = norm(text)
     for p in patterns:
@@ -56,7 +59,7 @@ def _match(text: str, patterns: list[str], threshold: int) -> float:
         # partial_ratio note 100 un texte très court contenu dans le motif (« e ») : on l'écarte
         if len(text) < 0.6 * len(p):
             continue
-        score = fuzz.partial_ratio(p, text)
+        score = fuzz.ratio(p, text) if whole else fuzz.partial_ratio(p, text)
         if score > best:
             best = score
     return best / 100.0 if best >= threshold else 0.0
@@ -76,7 +79,7 @@ def match_rules(lines: list[dict], rules: list[dict]) -> list[dict]:
             for x, y, text in frame["items"]:
                 if not (x0 <= x <= x1 and y0 <= y <= y1):
                     continue
-                conf = _match(text, rule["patterns"], rule.get("threshold", 78))
+                conf = _match(text, rule["patterns"], rule.get("threshold", 78), rule.get("whole", False))
                 if conf:
                     out.append({"t": frame["t"], "event": rule["event"], "text": text, "confidence": conf})
                     break
@@ -122,7 +125,8 @@ def analyze(
             last_full = t
             items = []
             for box, text, conf in reader.readtext(frame, paragraph=False):
-                if conf >= 0.3 and len(text.strip()) >= 4:
+                # on garde aussi les compteurs courts comme « 1/3 » (indices trouvés pour un boss)
+                if conf >= 0.3 and (len(text.strip()) >= 4 or re.fullmatch(r"\s*\d\s*/\s*\d\s*", text)):
                     cx = float(sum(p[0] for p in box)) / 4 / frame.shape[1]
                     cy = float(sum(p[1] for p in box)) / 4 / frame.shape[0]
                     items.append([round(cx, 3), round(cy, 3), text.strip()])

@@ -187,12 +187,12 @@
     "bounty": {
       "label": "Prime récupérée",
       "score": 12,
-      "before": 6,
-      "after": 4,
+      "before": 5,
+      "after": 5,
       "effects": [
         "punch_zoom"
       ],
-      "merge_s": 120
+      "merge_s": 1800
     },
     "revive": {
       "label": "Réanimation",
@@ -268,15 +268,15 @@
       "merge_s": 40
     },
     "boss_down": {
-      "label": "Boss abattu",
-      "score": 11,
-      "before": 8,
-      "after": 3,
+      "label": "Boss tué",
+      "score": 12,
+      "before": 10,
+      "after": 4,
       "effects": [
         "flash",
         "punch_zoom"
       ],
-      "merge_s": 1200
+      "merge_s": 600
     },
     "rival_bounty": {
       "label": "Prime adverse",
@@ -285,6 +285,25 @@
       "after": 4,
       "effects": [],
       "merge_s": 30
+    },
+    "boss_found": {
+      "label": "Boss trouvé",
+      "score": 8,
+      "before": 3,
+      "after": 5,
+      "effects": [
+        "punch_zoom"
+      ],
+      "merge_s": 600
+    },
+    "boss_banishing": {
+      "label": "Un boss se fait bannir",
+      "score": 3,
+      "before": 2,
+      "after": 3,
+      "effects": [],
+      "merge_s": 900,
+      "highlight": false
     }
   },
   "hashtags": [
@@ -376,31 +395,6 @@
         ]
       },
       {
-        "event": "boss_down",
-        "patterns": [
-          "bannir"
-        ],
-        "rect": [
-          0,
-          0.12,
-          0.35,
-          0.32
-        ],
-        "threshold": 80
-      },
-      {
-        "event": "bounty",
-        "patterns": [
-          "vision occulte amplifiee obtenue"
-        ],
-        "rect": [
-          0.55,
-          0.1,
-          1,
-          0.45
-        ]
-      },
-      {
         "event": "rival_bounty",
         "patterns": [
           "a ramasse une prime",
@@ -424,6 +418,115 @@
           0.6,
           0.8,
           0.86
+        ]
+      },
+      {
+        "event": "boss_found",
+        "patterns": [
+          "tuer boucher",
+          "tuer araignee",
+          "tuer assassin",
+          "tuer scrapbeak",
+          "tuer rotjaw",
+          "tuer hellborn",
+          "tuer butcher",
+          "tuer spider"
+        ],
+        "rect": [
+          0.25,
+          0.07,
+          0.75,
+          0.2
+        ],
+        "threshold": 78,
+        "whole": true
+      },
+      {
+        "event": "boss_found",
+        "patterns": [
+          "cible trouvee"
+        ],
+        "rect": [
+          0,
+          0.12,
+          0.35,
+          0.32
+        ],
+        "threshold": 78,
+        "whole": true
+      },
+      {
+        "event": "boss_down",
+        "patterns": [
+          "bannir boucher",
+          "bannir araignee",
+          "bannir assassin",
+          "bannir scrapbeak",
+          "bannir rotjaw",
+          "bannir hellborn",
+          "bannir butcher",
+          "bannir spider"
+        ],
+        "rect": [
+          0.25,
+          0.07,
+          0.75,
+          0.3
+        ],
+        "threshold": 78,
+        "whole": true
+      },
+      {
+        "event": "boss_down",
+        "patterns": [
+          "rituel en cours"
+        ],
+        "rect": [
+          0,
+          0.12,
+          0.35,
+          0.32
+        ],
+        "threshold": 78,
+        "whole": true
+      },
+      {
+        "event": "boss_banishing",
+        "patterns": [
+          "se fait bannir"
+        ],
+        "rect": [
+          0,
+          0.12,
+          0.35,
+          0.32
+        ],
+        "threshold": 78
+      },
+      {
+        "event": "bounty",
+        "patterns": [
+          "vision spectrale active",
+          "vous pouvez desormais voir les chasseurs proches"
+        ],
+        "rect": [
+          0.2,
+          0.07,
+          0.8,
+          0.25
+        ],
+        "threshold": 80
+      },
+      {
+        "event": "bounty",
+        "patterns": [
+          "vision occulte amplifiee obtenue"
+        ],
+        "rect": [
+          0.55,
+          0.1,
+          1,
+          0.45
         ]
       }
     ]

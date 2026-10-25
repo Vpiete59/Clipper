@@ -254,7 +254,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); cursor: pointer;
 
 .inbox { margin-top: var(--s10); }
 .inbox-list { overflow: hidden; }
-.inbox-row { display: grid; grid-template-columns: 36px 1fr 90px 110px 190px; align-items: center; gap: var(--s3); padding: 10px var(--s4); border-bottom: 1px solid var(--border); transition: background var(--t-fast); }
+.inbox-row { display: grid; grid-template-columns: 36px 1fr 90px 110px 230px; align-items: center; gap: var(--s3); padding: 10px var(--s4); border-bottom: 1px solid var(--border); transition: background var(--t-fast); }
 .inbox-row:last-child { border-bottom: 0; }
 .inbox-row:hover { background: var(--surface-2); }
 .inbox-icon { width: 32px; height: 32px; border-radius: 8px; background: var(--surface-3); display: grid; place-items: center; color: var(--text-3); }
@@ -514,3 +514,39 @@ input[type='range'] { width: 100%; accent-color: var(--accent); cursor: pointer;
 .mmatch { position: absolute; bottom: 0; height: 5px; background: rgba(61, 214, 140, 0.55); border-radius: 3px 3px 0 0; pointer-events: none; }
 .mmatch.dead { background: rgba(242, 85, 90, 0.6); }
 .mmatch.unknown { background: rgba(139, 139, 150, 0.6); }
+
+/* ============ Suppression ============ */
+.modal.confirm { width: min(500px, 100%); }
+.confirm-body { padding: var(--s5); display: flex; flex-direction: column; gap: var(--s3); color: var(--text-2); }
+.confirm-body p { margin: 0; }
+.confirm-option { display: flex; gap: var(--s3); align-items: flex-start; padding: var(--s3); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; }
+.confirm-option input { accent-color: var(--danger); width: 16px; height: 16px; margin-top: 2px; }
+.confirm-option span { display: flex; flex-direction: column; gap: 2px; color: var(--text); }
+.confirm-option small { color: var(--text-3); font-size: 12px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: var(--s2); padding: 0 var(--s5) var(--s5); }
+.btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 650; }
+.btn.danger-solid:hover:not(:disabled) { background: #ff6b70; border-color: #ff6b70; }
+.vcard-wrap { position: relative; }
+.vcard-del { position: absolute; top: 10px; right: 10px; z-index: 5; opacity: 0; transition: opacity var(--t-fast); background: rgba(0,0,0,0.65); border-color: transparent; color: #fff; }
+.vcard-wrap:hover .vcard-del, .vcard-del:focus-visible { opacity: 1; }
+.vcard-del:hover:not(:disabled) { background: var(--danger); border-color: var(--danger); }
+.title-btn { display: flex; align-items: center; gap: var(--s2); max-width: 100%; border: 0; background: none; padding: 2px 6px; margin-left: -6px; border-radius: var(--r-sm); color: inherit; text-align: left; }
+.title-btn:hover { background: var(--surface-2); }
+.title-pen { color: var(--text-3); flex: none; opacity: 0; transition: opacity var(--t-fast); }
+.title-btn:hover .title-pen, .title-btn:focus-visible .title-pen { opacity: 1; }
+.title-input { font-family: var(--font-display); font-size: 26px; font-weight: 700; text-transform: uppercase; min-height: 40px; max-width: 640px; }
+
+/* ============ File de tâches ============ */
+.live-dot.paused { background: var(--text-3); box-shadow: inset 0 0 0 2px var(--surface-1); outline: 2px solid var(--text-3); outline-offset: -1px; }
+.queue-title .btn { margin: -4px -4px -4px 0; }
+.queue-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.queue-list li { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.queue-kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; width: 48px; flex: none; }
+.queue-x { border: 0; background: transparent; color: var(--text-3); width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; flex: none; transition: background var(--t-fast), color var(--t-fast); }
+.queue-x:hover { background: var(--danger-soft); color: var(--danger); }
+.queue-link { border: 0; background: none; color: var(--text-2); font-size: 12px; padding: 4px 0 0; text-align: left; display: block; }
+.queue-link:hover { color: var(--text); text-decoration: underline; }
+.queue-link.danger:hover { color: var(--danger); }
+.match.dim { opacity: 0.6; }
+.potential { font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--accent-ink); background: var(--accent); border-radius: 6px; padding: 1px 8px; }
+.clip.longform video { aspect-ratio: 16 / 9; }

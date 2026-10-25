@@ -65,6 +65,7 @@ class Settings:
     watch_folders: list[str] = field(default_factory=list)
     output_folder: str = str(Path.home() / "Videos" / "Clipper")
     auto_process: bool = True
+    auto_min_duration: float = 180.0  # en dessous (extraits, vidéos Kinevir…), pas de traitement automatique
     default_game: str = "hunt_showdown"
     language: str = "fr"  # "auto" pour laisser Whisper deviner
     whisper_model: str = "large-v3"
@@ -73,6 +74,9 @@ class Settings:
     clip_min_s: float = 8.0
     clip_max_s: float = 45.0
     min_score: float = 12.0
+    story_only_worth: bool = True  # résumés auto seulement pour les parties gagnées ou à 2 kills et plus
+    story_preset: str = "action"  # rythme des résumés de partie : recit | action | express
+    title_style: str = "center"  # titres de chapitre : center | hunt | banner
     subtitle_style: str = "bold_pop"
     subtitle_y: float = 0.70  # sources 16:9 recadrées
     subtitle_y_portrait: float = 0.44  # sources déjà verticales : au-dessus du HUD et de la facecam
@@ -85,7 +89,7 @@ class Settings:
         "shake": True,
         "hook_title": True,
         "progress_bar": True,
-        "teaser": True,
+        "teaser": False,  # pas d'aperçu avant le clip par défaut
         "speed_ramp": True,
         "sfx": True,
     })

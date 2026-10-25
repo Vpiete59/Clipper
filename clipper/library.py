@@ -61,8 +61,15 @@ def update_video(vid: str, **fields) -> None:
 
 
 def delete_video(vid: str) -> None:
+    for r in _q("SELECT path FROM renders WHERE video_id=?", (vid,)):
+        _q("DELETE FROM publications WHERE path=?", (r["path"],))
     _q("DELETE FROM videos WHERE id=?", (vid,))
     _q("DELETE FROM renders WHERE video_id=?", (vid,))
+
+
+def delete_render(path: str) -> None:
+    _q("DELETE FROM renders WHERE path=?", (path,))
+    _q("DELETE FROM publications WHERE path=?", (path,))
 
 
 def add_render(vid: str, moment_id: int | None, kind: str, path: str) -> None:

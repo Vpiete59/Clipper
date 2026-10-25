@@ -1,6 +1,7 @@
 import { FilmStrip, GearSix, Scissors } from '@phosphor-icons/react'
 import { useEffect, useState } from 'react'
-import { api, STAGE_LABEL, type Game, type Video } from './api'
+import { api, type Game, type QueueState, type Video } from './api'
+import QueuePanel from './QueuePanel'
 import Library from './Library'
 import SettingsPage from './SettingsPage'
 import VideoView from './VideoView'
@@ -13,11 +14,15 @@ export default function App() {
   const [videos, setVideos] = useState<Video[] | null>(null)
   const [games, setGames] = useState<Game[]>([])
 
+  const [queue, setQueue] = useState<QueueState | null>(null)
+  const refresh = () => {
+    api.videos().then(setVideos).catch(() => {})
+    api.queue().then(setQueue).catch(() => {})
+  }
   useEffect(() => {
     api.games().then(setGames)
-    const load = () => api.videos().then(setVideos).catch(() => {})
-    load()
-    const timer = setInterval(load, 1500)
+    refresh()
+    const timer = setInterval(refresh, 1500)
     return () => clearInterval(timer)
   }, [])
 
@@ -25,8 +30,6 @@ export default function App() {
   useEffect(() => { document.querySelector('.main')?.scrollTo({ top: 0 }) }, [route])
 
   const list = videos ?? []
-  const running = list.filter(v => ['analyzing', 'rendering'].includes(v.status))
-  const waiting = list.filter(v => ['queued', 'rendering_queued'].includes(v.status)).length
 
   return (
     <div className="app">
@@ -45,24 +48,7 @@ export default function App() {
           <GearSix size={19} aria-hidden /> Réglages
         </button>
 
-        <div className="queue" aria-live="polite">
-          <div className="queue-title">
-            <span className={`live-dot ${running.length ? 'on' : 'ok'}`} aria-hidden />
-            {running.length ? 'Au travail' : 'Surveillance OBS active'}
-          </div>
-          {running.map(v => (
-            <div key={v.id} className="queue-item">
-              <div className="ellipsis" title={v.name}>{v.name}</div>
-              <div className="row faint" style={{ justifyContent: 'space-between', margin: '2px 0 5px' }}>
-                <span>{v.stage ? STAGE_LABEL[v.stage] ?? v.stage : 'Préparation'}</span>
-                <span className="mono">{Math.round(v.progress * 100)} %</span>
-              </div>
-              <div className="progress"><div style={{ width: `${v.progress * 100}%` }} /></div>
-            </div>
-          ))}
-          {waiting > 0 && <div className="faint" style={{ marginTop: 8 }}>+ {waiting} en attente</div>}
-          {!running.length && !waiting && <div className="faint" style={{ marginTop: 4 }}>Chaque enregistrement terminé est analysé tout seul.</div>}
-        </div>
+        <QueuePanel queue={queue} videos={list} onChange={refresh} />
       </aside>
 
       <main className="main">

@@ -41,6 +41,11 @@
       "threshold": 0.6,
       "event": "hype_talk",
       "min_duration": 2.0
+    },
+    "chat_spike": {
+      "threshold": 0.6,
+      "event": "chat_hype",
+      "min_duration": 1.0
     }
   },
   "keywords": {
@@ -134,6 +139,15 @@
       "before": 20,
       "after": 5,
       "effects": []
+    },
+    "chat_hype": {
+      "label": "Le chat s'enflamme",
+      "score": 11,
+      "before": 12,
+      "after": 3,
+      "effects": [
+        "punch_zoom"
+      ]
     }
   },
   "hashtags": [

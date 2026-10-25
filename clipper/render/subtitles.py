@@ -24,6 +24,21 @@ def _esc(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")")
 
 
+STRONG_COLOR = "&H004A4AFF"  # rouge vif (BGR)
+# mots qui portent l'action ou l'émotion : ils ressortent même quand ce n'est pas leur tour
+STRONG_WORDS = {
+    "mort", "morts", "tué", "tue", "tuer", "down", "tête", "headshot", "one", "shot", "prime", "boss", "indice",
+    "indices", "extraction", "attention", "derrière", "là", "putain", "merde", "non", "oui", "gg", "go", "vite",
+    "cours", "feu", "explose", "kill", "kills", "full", "rez", "soigne", "équipe", "ennemi", "ennemis", "chasseur",
+    "chasseurs", "bannir", "banni", "dynamite", "campe", "campeur", "touché", "eu", "incroyable", "jamais",
+}
+
+
+def _is_strong(word: str, extra: set[str] | None) -> bool:
+    w = re.sub(r"[^\w'-]", "", word.lower()).split("'")[-1]
+    return bool(w) and (w in STRONG_WORDS or (extra is not None and w in extra) or w.isdigit())
+
+
 def _fr_typo(token: str) -> str:
     """Typographie française : espace insécable (\\h en ASS) avant ? ! : ; — « NON ? » et pas « NON? »."""
     if token in ("?", "!", ":", ";"):
@@ -70,8 +85,16 @@ def build_ass(
     hook: str | None = None,
     width: int = 1080,
     height: int = 1920,
+    title_style: str = "banner",
+    counter: dict | None = None,
+    emphasis: set[str] | None = None,
 ) -> str:
-    """`words` en temps source ; `remap` convertit vers le temps du clip (ralentis compris)."""
+    """`words` en temps source ; `remap` convertit vers le temps du clip (ralentis compris).
+
+    `title_style` : « banner » (bandeau jaune en haut), « center » (gros titre au centre qui
+    claque) ou « hunt » (bande noire et lettres dorées, façon notification du jeu).
+    `counter` : {"base": kills avant le clip, "times": [instants des kills en temps du clip]}.
+    """
     font, size, color, hl, outline = STYLES.get(style, STYLES["bold_pop"])
     y = int(height * y_ratio)
     lines = [
@@ -82,11 +105,28 @@ def build_ass(
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Sub,{font},{size},{color},{hl},&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,{outline},3,5,60,60,0,1",
         f"Style: Hook,{font},{int(size * 0.95)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,3,18,0,8,80,80,170,1",
+        "Style: Big,Impact,150,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,2,0,1,9,6,5,40,40,0,1",
+        "Style: Hunt,Georgia,74,&H0096D8F2,&H0096D8F2,&H00000000,&H3C000000,-1,0,0,0,100,100,6,0,3,26,0,8,0,0,300,1",
+        "Style: Kills,Arial Black,58,&H00FFFFFF,&H00FFFFFF,&H00000000,&H78000000,-1,0,0,0,100,100,1,0,3,14,0,9,0,40,150,1",
         "", "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
-    if hook:
+    if hook and title_style == "center":
+        # gros titre qui claque au centre puis s'efface : « PREMIER INDICE »
+        lines.append(
+            f"Dialogue: 2,{_ts(0)},{_ts(min(1.9, duration))},Big,,0,0,0,,"
+            f"{{\\pos({width // 2},{int(height * 0.36)})\\fad(0,300)\\fscx160\\fscy160"
+            "\\t(0,140,\\fscx95\\fscy95)\\t(140,240,\\fscx100\\fscy100)}"
+            + _esc(hook.upper())
+        )
+    elif hook and title_style == "hunt":
+        # bande noire, lettres dorées espacées : la typo des notifications de Hunt
+        lines.append(
+            f"Dialogue: 2,{_ts(0)},{_ts(min(2.6, duration))},Hunt,,0,0,0,,"
+            "{\\fad(250,350)\\fsp14\\t(0,600,\\fsp6)}" + _esc(hook.upper())
+        )
+    elif hook:
         # bandeau d'accroche : apparaît en rebond puis disparaît après 2,8 s
         lines.append(
             f"Dialogue: 1,{_ts(0)},{_ts(min(2.8, duration))},Hook,,0,0,0,,"
@@ -94,9 +134,20 @@ def build_ass(
             + _esc(hook.upper())
         )
 
+    if counter and (counter["base"] or counter["times"]):
+        # compteur de kills en haut à droite ; il grossit en rouge à chaque nouveau kill
+        marks = [0.0, *sorted(x for x in counter["times"] if 0 <= x < duration), duration]
+        for k in range(len(marks) - 1):
+            n = counter["base"] + k
+            if n == 0 or marks[k + 1] <= marks[k]:
+                continue
+            pop = "{\\c&H3C3CFF&\\fscx140\\fscy140\\t(0,250,\\fscx100\\fscy100\\c&HFFFFFF&)}" if k > 0 else ""
+            lines.append(f"Dialogue: 3,{_ts(marks[k])},{_ts(marks[k + 1])},Kills,,0,0,0,,{pop}KILLS {n}")
+
     chunks = _chunks(words)
     for ci, chunk in enumerate(chunks):
         texts = [_fr_typo(_esc(w["word"]).upper()) for w in chunk]
+        strong = [_is_strong(w["word"], emphasis) for w in chunk]
         # un groupe s'efface au plus tard quand le suivant apparaît : jamais deux lignes superposées
         hard_end = remap(chunks[ci + 1][0]["start"]) if ci + 1 < len(chunks) else duration
         for i, w in enumerate(chunk):
@@ -109,6 +160,11 @@ def build_ass(
                 piece = txt
                 if j == i:
                     piece = "{\\c" + hl + "&\\fscx112\\fscy112\\t(0,90,\\fscx100\\fscy100)}" + txt + "{\\c" + color + "&}"
+                elif strong[j]:
+                    # mot fort (action, juron, nom du jeu) : reste en couleur et un peu plus gros, façon Opus Clip
+                    piece = "{\\c" + STRONG_COLOR + "&\\fscx108\\fscy108}" + txt + "{\\c" + color + "&\\fscx100\\fscy100}"
+                if j == i and strong[j]:
+                    piece = "{\\c" + STRONG_COLOR + "&\\fscx122\\fscy122\\t(0,110,\\fscx108\\fscy108)}" + txt + "{\\c" + color + "&\\fscx100\\fscy100}"
                 glue = j == 0 or txt.startswith("\\h") or glues_left(txt) or texts[j - 1].endswith(("'", "’", "-"))
                 line += piece if glue else " " + piece
             pop = "{\\fscx85\\fscy85\\t(0,90,\\fscx100\\fscy100)}" if i == 0 else ""

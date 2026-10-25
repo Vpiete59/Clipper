@@ -242,7 +242,9 @@ def split_sentences(segments: list[dict], max_len: float = 12.0) -> list[dict]:
             cur.append(w)
             nxt = seg["words"][i + 1] if i + 1 < len(seg["words"]) else None
             ends = w["word"].endswith((".", "!", "?", "…"))
-            pause = nxt is not None and nxt["start"] - w["end"] > 0.8
+            # jamais de coupure dans une élision (« C » + « 'est ») même s'il y a une pause
+            elided = nxt is not None and (nxt["word"][:1] in "'’-" or w["word"].endswith(("'", "’")) or len(w["word"]) == 1)
+            pause = nxt is not None and nxt["start"] - w["end"] > 0.8 and not elided
             too_long = cur[-1]["end"] - cur[0]["start"] > max_len and w["word"].endswith(",")
             if nxt is None or ends or pause or too_long:
                 text = " ".join(x["word"] for x in cur)
