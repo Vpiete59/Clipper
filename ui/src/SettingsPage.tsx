@@ -114,6 +114,18 @@ export default function SettingsPage({ games }: { games: Game[] }) {
                   onBlur={e => save({ custom_keywords: e.target.value.split('\n').map(x => x.trim()).filter(Boolean) })} />
                 <div className="hint">Un par ligne. Dis-les pendant ta partie pour forcer un moment fort.</div>
               </div>
+              {([
+                ['alert_phrases', "Phrases d'alerte", 'y a des joueurs pas loin\nattends chut', "Avant un combat : le chapitre commence 5 s avant la phrase pour entendre le bruit qui t'a alerté."],
+                ['ally_down_phrases', 'Allié / moi à terre', 'je suis down\nrez moi', "Montrées dans le combat même si ce n'est pas toi qui tires."],
+                ['enemy_down_phrases', 'Ennemi à terre', 'il est down\nun de moins', 'Un équipier qui met un ennemi à terre compte aussi.'],
+              ] as const).map(([key, label, ph, hint]) => (
+                <div className="full" key={key}>
+                  <label className="field-label" htmlFor={key}>{label}</label>
+                  <textarea id={key} className="textarea" rows={4} defaultValue={s[key].join('\n')} placeholder={ph}
+                    onBlur={e => save({ [key]: e.target.value.split('\n').map(x => x.trim()).filter(Boolean) })} />
+                  <div className="hint">{hint} Une phrase par ligne ; s'applique à la prochaine ré-analyse rapide.</div>
+                </div>
+              ))}
             </div>
           </Section>
 

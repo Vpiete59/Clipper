@@ -81,8 +81,18 @@ def _pvp_events(events: list[dict], profile: dict) -> list[dict]:
 
 
 def detect_events(profile: dict, signals: dict[str, np.ndarray], ocr: list[dict],
-                  keyword_hits: list[dict], bookmarks: list[float]) -> list[dict]:
+                  keyword_hits: list[dict], bookmarks: list[float],
+                  phrase_hits: dict[str, list[dict]] | None = None, markers: list[float] | None = None) -> list[dict]:
+    """`phrase_hits` : {type: occurrences} pour les phrases d'alerte / allié à terre / ennemi à terre.
+    `markers` : instants du « X » de touche sur un joueur."""
     events: list[dict] = []
+    for t in markers or []:
+        events.append({"t": t, "start": t, "end": t + 0.3, "type": "hit_marker", "source": "visual", "strength": 1.0})
+    for kind, hits in (phrase_hits or {}).items():
+        if kind in profile["events"]:
+            for h in hits:
+                events.append({"t": h["t"], "start": h["t"], "end": h["end"], "type": kind, "source": "speech",
+                               "strength": 1.0, "text": h["keyword"]})
     for name, spec in profile["signals"].items():
         if name in signals:
             events += _signal_events(name, signals[name], spec)
@@ -259,17 +269,20 @@ ORDINALS = ["Premier", "Deuxième", "Troisième", "Quatrième", "Cinquième", "S
 # préréglages de montage du résumé : (avant, après) par type de chapitre et budget total
 PRESETS = {
     # tout le récit, en prenant le temps (l'accélération des temps morts resserre ensuite)
-    "recit": {"budget": 180, "clue": (7, 6), "boss_found": (3, 6), "boss_down": (14, 5), "bounty": (6, 6),
-              "fight_pad": (4, 5), "fight_max": 40, "extract": (14, 3), "death": (10, 3), "max_clues": 6},
+    "recit": {"budget": 220, "clue": (7, 6), "boss_found": (3, 6), "boss_down": (14, 5), "bounty": (6, 6),
+              "fight_pad": (4, 5), "fight_max": 90, "extract": (14, 3), "death": (10, 3), "max_clues": 6},
     # l'action d'abord : indices courts, combats longs
-    "action": {"budget": 100, "clue": (4, 4), "boss_found": (2, 4), "boss_down": (10, 4), "bounty": (4, 4),
-               "fight_pad": (5, 6), "fight_max": 50, "extract": (10, 2), "death": (10, 3), "max_clues": 6},
+    "action": {"budget": 150, "clue": (4, 4), "boss_found": (2, 4), "boss_down": (10, 4), "bounty": (4, 4),
+               "fight_pad": (5, 6), "fight_max": 75, "extract": (10, 2), "death": (10, 3), "max_clues": 6},
     # vidéo longue YouTube 16:9 : on laisse respirer chaque moment
     "longform": {"budget": 720, "clue": (20, 12), "boss_found": (10, 15), "boss_down": (45, 12), "bounty": (15, 15),
-                 "fight_pad": (15, 15), "fight_max": 150, "extract": (40, 6), "death": (25, 6), "max_clues": 6},
+                 "fight_pad": (15, 15), "fight_max": 180, "extract": (40, 6), "death": (25, 6), "max_clues": 6},
+    # compilation YouTube de plusieurs parties : ~2 min 30 par partie
+    "condense": {"budget": 160, "clue": (9, 7), "boss_found": (5, 8), "boss_down": (22, 6), "bounty": (8, 8),
+                 "fight_pad": (8, 8), "fight_max": 90, "extract": (22, 4), "death": (14, 4), "max_clues": 6},
     # format court, tout tient en une minute
-    "express": {"budget": 70, "clue": (4, 3), "boss_found": (2, 3), "boss_down": (8, 3), "bounty": (3, 4),
-                "fight_pad": (3, 4), "fight_max": 25, "extract": (8, 2), "death": (8, 2), "max_clues": 6},
+    "express": {"budget": 95, "clue": (4, 3), "boss_found": (2, 3), "boss_down": (8, 3), "bounty": (3, 4),
+                "fight_pad": (3, 4), "fight_max": 45, "extract": (8, 2), "death": (8, 2), "max_clues": 6},
 }
 
 
@@ -327,27 +340,66 @@ def match_potential(m: dict) -> int:
     return int(min(100, score))
 
 
-def _fights(events: list[dict], boss_window: tuple[float, float] | None) -> list[dict]:
-    """Confrontations : rafales de tirs (≥ 3 tirs, écarts < 15 s) hors combat de boss, ou
-    tirs autour d'un cri de mort de chasseur / d'une touche sur un joueur.
+# temps forts d'un long combat : secondes gardées avant / après
+BEATS = {"alert": (5, 8), "kill": (10, 4), "enemy_down": (8, 4), "ally_down": (8, 5), "end": (10, 0)}
 
-    Les monstres ne crient pas comme un chasseur : un cri dans la rafale = joueur abattu.
+
+def _fights(events: list[dict], boss_window: tuple[float, float] | None) -> list[dict]:
+    """Confrontations contre des joueurs, avec tout leur cheminement.
+
+    Un combat regroupe tirs, cris de mort (joueur abattu, allié ou ennemi) et phrases d'équipe
+    (« je suis down », « un de moins »…) espacés de moins de 40 s. Il commence à la phrase
+    d'alerte qui le précède (« y'a des gens », « chut »…) s'il y en a une dans la minute
+    d'avant : on entend alors ce qui t'a mis la puce à l'oreille. Hors combat de boss, il
+    faut au moins 3 tirs, ou un cri, ou une phrase d'équipe.
     """
-    shots = sorted(e["t"] for e in events if e["type"] in ("gunfight", "player_hit"))
-    cries = sorted(e["t"] for e in events if e["type"] in ("death_cry", "pvp_fight"))
-    groups: list[list[float]] = []
-    for s in shots:
-        if groups and s - groups[-1][-1] < 15:
-            groups[-1].append(s)
+    core = sorted((e for e in events if e["type"] in ("gunfight", "player_hit", "hit_marker", "death_cry", "pvp_fight",
+                                                       "ally_down", "enemy_down")), key=lambda e: e["t"])
+    alerts = sorted(e["t"] for e in events if e["type"] == "alert")
+    deaths = [e["t"] for e in events if e["type"] == "death"]
+    # vidéo sans X de touche détecté (autre jeu, format vertical) : chaque râle compte comme un kill
+    has_markers = any(e["type"] == "hit_marker" for e in events)
+    groups: list[list[dict]] = []
+    for e in core:
+        gap = e["t"] - groups[-1][-1]["t"] if groups else 1e9
+        # une accalmie pleine de « il est là », « y en a encore deux » fait toujours partie du combat
+        talk = groups and any(groups[-1][-1]["t"] < x < e["t"] for x in alerts)
+        if gap < 40 or (talk and gap < 75):
+            groups[-1].append(e)
         else:
-            groups.append([s])
-    out = []
+            groups.append([e])
+    out, prev_end = [], -1e9
     for g in groups:
-        a, b = g[0], g[-1]
-        kills = [c for c in cries if a - 10 <= c <= b + 8]
+        a, b = g[0]["t"], g[-1]["t"]
+        shots = sum(1 for e in g if e["type"] in ("gunfight", "player_hit", "hit_marker"))
+        team = [e for e in g if e["type"] in ("ally_down", "enemy_down")]
+        # un cri tout près de « je suis down » ou de notre mort, c'est un allié qui tombe : pas un kill
+        ours = [e["t"] for e in team if e["type"] == "ally_down"] + deaths
+        kills: list[float] = []
+        downs = 0  # chasseurs à terre sans notre X de touche : un équipier ou un ennemi, pas notre kill
+        for e in g:
+            if (e["type"] in ("death_cry", "pvp_fight") and not any(abs(e["t"] - x) <= 6 for x in ours)
+                    and not (kills and e["t"] - kills[-1] < 4)):  # cri et fusillade du même kill
+                # notre kill = un râle juste après notre X de touche ; le kill-cam se cale sur le X
+                hit = next((m["t"] for m in reversed(g) if m["type"] == "hit_marker" and e["t"] - 3 <= m["t"] <= e["t"] + 0.5), None)
+                if hit is not None or not has_markers:
+                    kills.append(hit if hit is not None else e["t"])
+                elif e["type"] == "death_cry":
+                    downs += 1
         in_boss = boss_window and boss_window[0] - 5 <= a and b <= boss_window[1] + 5
-        if kills or (len(g) >= 3 and not in_boss):
-            out.append({"start": a, "end": max(b, *kills) if kills else b, "shots": len(g), "kills": kills})
+        if not (kills or downs or team or (shots >= 3 and not in_boss)):
+            continue
+        alert = next((x for x in reversed(alerts) if max(prev_end, a - 60) <= x <= a), None)
+        # les temps forts du combat, dans l'ordre : chaque alerte, kill, allié ou ennemi à terre
+        beats = [(x, "alert", next((e.get("text", "") for e in events if e["type"] == "alert" and e["t"] == x), ""))
+                 for x in alerts if a < x < b]
+        beats += [(k, "kill", "") for k in kills]
+        beats += [(e["t"], e["type"], "") for e in team]
+        out.append({"start": a, "end": b, "alert": alert, "shots": shots, "kills": kills, "beats": sorted(beats), "downs": downs,
+                    "ally_down": sum(1 for e in team if e["type"] == "ally_down"),
+                    "enemy_down": sum(1 for e in team if e["type"] == "enemy_down"),
+                    "alert_text": next((e.get("text", "") for e in events if e["type"] == "alert" and e["t"] == alert), "")})
+        prev_end = b
     return out
 
 
@@ -369,7 +421,7 @@ def build_chapters(events: list[dict], m_start: float, m_end: float, outcome: st
             label += f" · {e['clue_count']}"
         if e.get("boss_name"):
             label += f" · {e['boss_name']}"
-        add("clue", label, e["t"], *p["clue"], prio=2, score=30)  # avant les fusillades
+        add("clue", label, e["t"], *p["clue"], prio=1, score=30)  # le fil de la partie : jamais sacrifié
     if found:
         add("boss_found", "Boss trouvé", found["t"], *p["boss_found"], prio=2)
     if down:
@@ -379,13 +431,37 @@ def build_chapters(events: list[dict], m_start: float, m_end: float, outcome: st
     boss_window = (found["t"], down["t"]) if found and down else None
     for f in _fights(events, boss_window):
         pad_b, pad_a = p["fight_pad"]
-        length = min(p["fight_max"], f["end"] - f["start"] + pad_b + pad_a)
-        if f["kills"]:
-            for k in f["kills"]:
-                add("kill", "Ennemi tué", k, min(length, 12), 3, prio=1, score=15, shots=f["shots"])
+        start = f["alert"] - 5 if f["alert"] is not None else f["start"] - pad_b  # 5 s avant « y'a des gens »
+        end = f["end"] + pad_a
+        kind = "kill" if f["kills"] else "confrontation"
+        label = "Ennemi tué" if f["kills"] else "Confrontation"
+        if not f["kills"] and (f["ally_down"] or f["downs"]):
+            label = "Allié à terre" if f["ally_down"] else "Chasseur à terre"
+        extra = {"shots": f["shots"], "kills": f["kills"]}
+        prio, score = (1, 15 + 3 * len(f["kills"])) if f["kills"] else (2, 8 + f["shots"] + 4 * (f["ally_down"] + f["downs"]))
+        if end - start <= p["fight_max"]:
+            add(kind, label, f["start"], f["start"] - start, end - f["start"], prio=prio, score=score, **extra)
         else:
-            add("confrontation", "Confrontation", f["start"] + (f["end"] - f["start"]) / 2,
-                length / 2, length / 2, prio=2, score=8 + f["shots"], shots=f["shots"])
+            # combat trop long : on garde son cheminement, temps fort par temps fort (l'alerte et
+            # le bruit qui l'a déclenchée, chaque kill, chaque allié ou ennemi à terre), puis la fin
+            beats = [(f["alert"], "alert", f["alert_text"])] if f["alert"] is not None else []
+            segs: list[list] = []
+            for x, kind_b, text in beats + f["beats"]:
+                lo, hi = BEATS[kind_b]
+                s0, s1 = x - lo, x + hi
+                if segs and s0 - segs[-1][1] < 6:  # deux temps forts proches : un seul passage
+                    segs[-1][1] = max(segs[-1][1], s1)
+                    segs[-1][3] += [k for k in f["kills"] if s0 <= k <= s1 and k not in segs[-1][3]]
+                else:
+                    segs.append([s0, s1, (kind_b, text), [k for k in f["kills"] if s0 <= k <= s1]])
+            if not segs or f["end"] + pad_a - segs[-1][1] > 6:
+                segs.append([f["end"] - 10, f["end"] + pad_a, ("end", ""), [k for k in f["kills"] if k >= f["end"] - 10]])
+            for s0, s1, (kind_b, text), ks in segs:
+                lab = {"alert": f"« {text.strip().capitalize()} »" if text.strip() else "Ça s'approche",
+                       "kill": "Ennemi tué", "enemy_down": "Ennemi à terre", "ally_down": "Allié à terre"}.get(kind_b, label)
+                k_kind = "kill" if ks else ("alert" if kind_b == "alert" else "confrontation")
+                # seuls les passages avec un de nos kills sont garantis ; le reste passe si le budget le permet
+                add(k_kind, lab, s0, 0, s1 - s0, prio=1 if ks else 2, score=score + (2 if ks else 0), shots=f["shots"], kills=ks)
     if extracted:
         add("extracted", "Extraction réussie", extracted["t"], *p["extract"], prio=1, score=12)
     elif death:
@@ -400,6 +476,8 @@ def build_chapters(events: list[dict], m_start: float, m_end: float, outcome: st
         if clash:
             clash["start"], clash["end"] = min(clash["start"], c["start"]), max(clash["end"], c["end"])
             clash.setdefault("also", []).append(c["label"])
+            if c.get("kills"):  # le compteur de kills ne perd pas ceux du chapitre absorbé
+                clash["kills"] = sorted({*clash.get("kills", []), *c["kills"]})
             continue
         length = c["end"] - c["start"]
         if total + length > p["budget"] and c["prio"] > 1:

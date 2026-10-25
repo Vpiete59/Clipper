@@ -14,6 +14,7 @@ from pathlib import Path
 from . import games, library, pipeline, scoring
 from .config import DATA_DIR, Settings
 from .render import build_montage, render_clip
+from .render.compilation import render_compilation
 from .render.longform import render_longform
 from .render.story import render_story
 
@@ -142,6 +143,35 @@ def _render_kwargs(settings: Settings, analysis: dict) -> dict:
                 emphasis=vocab)
 
 
+def _compile(vid: str, items: list[list], title: str = "") -> None:
+    """Vidéo YouTube qui enchaîne plusieurs parties ; `items` = [[id vidéo, id partie], ...] dans l'ordre."""
+    import re
+    import time
+
+    parts = []
+    analyses: dict[str, dict] = {}
+    for item_vid, match_id in items:
+        a = analyses.setdefault(item_vid, pipeline.load_analysis(item_vid))
+        match = next((m for m in a.get("matches", []) if m["id"] == match_id), None) if a else None
+        if match:
+            parts.append({"source": library.get_video(item_vid)["path"], "match": match, "analysis": a})
+    if not parts:
+        raise ValueError("Aucune partie valide dans la sélection")
+    slug = re.sub(r"[^\w-]+", "_", title.strip())[:40].strip("_") or "parties"
+    out = Path(Settings.load().output_folder) / "YouTube" / f"{time.strftime('%Y-%m-%d_%H%M')}_{slug}.mp4"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    game_name = games.load(parts[0]["analysis"]["game"])["name"]
+    library.update_video(vid, status="rendering", stage="compilation", progress=0)
+
+    def progress(p: float) -> None:
+        _check()
+        library.update_video(vid, progress=round(p, 3))
+
+    files = render_compilation(parts, out, title=title, game_name=game_name, progress=progress)
+    library.add_render(vid, None, "compilation", str(files["video"]))
+    library.update_video(vid, status="done", stage=None, progress=1)
+
+
 def _render_longform(vid: str, match_ids: list[int]) -> None:
     """Vidéo longue YouTube 16:9 des parties choisies (+ chapitres, .srt, miniature)."""
     analysis = pipeline.load_analysis(vid)
@@ -232,6 +262,8 @@ def _worker() -> None:
                 _analyze(vid, **kwargs)
             elif kind == "render":
                 _render(vid, **kwargs)
+            elif kind == "compile":
+                _compile(vid, **kwargs)
         except JobCancelled:
             _restore_status(vid)
         except Exception as exc:  # une vidéo en échec ne doit pas bloquer la file

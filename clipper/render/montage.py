@@ -22,7 +22,9 @@ def _teaser(clip: Path) -> float:
     return json.loads(meta.read_text())["teaser"] if meta.exists() else 0.0
 
 
-def build_montage(clips: list[Path], out_path: Path, whoosh: bool = True) -> Path:
+def build_montage(clips: list[Path], out_path: Path, whoosh: bool = True, transitions: list[str] | None = None,
+                  xfade: float = XFADE, video_args: list[str] | None = None) -> Path:
+    """`transitions` : une transition xfade par coupe (sinon on alterne celles de TRANSITIONS)."""
     if not clips:
         raise ValueError("Aucun clip à assembler")
     if len(clips) == 1:
@@ -41,12 +43,12 @@ def build_montage(clips: list[Path], out_path: Path, whoosh: bool = True) -> Pat
     parts, offset, cuts = [], 0.0, []
     prev_v, prev_a = "[0:v]", "[0:a]"
     for i in range(1, len(clips)):
-        offset += durations[i - 1] - XFADE
+        offset += durations[i - 1] - xfade
         cuts.append(offset)
-        tr = TRANSITIONS[(i - 1) % len(TRANSITIONS)]
+        tr = transitions[i - 1] if transitions else TRANSITIONS[(i - 1) % len(TRANSITIONS)]
         parts.append(f"[{i}:v]setpts=PTS-STARTPTS[in{i}];[{i}:a]asetpts=PTS-STARTPTS[ain{i}]")
-        parts.append(f"{prev_v}[in{i}]xfade=transition={tr}:duration={XFADE}:offset={offset:.3f}[v{i}]")
-        parts.append(f"{prev_a}[ain{i}]acrossfade=d={XFADE}[a{i}]")
+        parts.append(f"{prev_v}[in{i}]xfade=transition={tr}:duration={xfade}:offset={offset:.3f}[v{i}]")
+        parts.append(f"{prev_a}[ain{i}]acrossfade=d={xfade}[a{i}]")
         prev_v, prev_a = f"[v{i}]", f"[a{i}]"
 
     if whoosh:
@@ -61,8 +63,9 @@ def build_montage(clips: list[Path], out_path: Path, whoosh: bool = True) -> Pat
         prev_a = "[aout]"
 
     cmd = [FFMPEG, "-y", "-v", "error", *inputs, "-filter_complex", ";".join(parts),
-           "-map", prev_v, "-map", prev_a, "-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "23",
-           "-b:v", "10M", "-maxrate", "14M", "-bufsize", "28M",
+           "-map", prev_v, "-map", prev_a,
+           *(video_args or ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "23",
+                            "-b:v", "10M", "-maxrate", "14M", "-bufsize", "28M"]),
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out_path)]
     res = subprocess.run(cmd, capture_output=True, text=True, creationflags=NO_WINDOW)
     if res.returncode != 0:

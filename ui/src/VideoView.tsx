@@ -1,11 +1,12 @@
 import {
-  ArrowCounterClockwise, ArrowLeft, Ear, PencilSimple, X, FlagCheckered, ArrowSquareOut, Check, CheckCircle, ClosedCaptioning, DeviceMobile,
+  ArrowCounterClockwise, ArrowLeft, Ear, Image as ImageIcon, PencilSimple, X, FlagCheckered, ArrowSquareOut, Check, CheckCircle, ClosedCaptioning, DeviceMobile,
   Eye, EyeSlash, FilmStrip, FolderOpen, Lightning, PaperPlaneTilt, Trash, Pause, Play, Plus, Quotes, Sparkle, Star, Warning,
 } from '@phosphor-icons/react'
 import ConfirmDialog from './ConfirmDialog'
 import { DeleteVideoDialog } from './Library'
 import PublishDialog, { PLATFORM_META } from './PublishDialog'
 import SoundsTab from './SoundsTab'
+import ThumbnailDialog from './ThumbnailDialog'
 import MatchesTab from './MatchesTab'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BUSY } from './App'
@@ -17,8 +18,8 @@ const STAGES: [string, number, number][] = [
 ]
 const SIGNALS: [string, string][] = [['gunshot', '#ff6b5e'], ['loudness_spike', '#6b6b76'], ['speech_excited', '#b98cff'], ['laughter', '#f78fc5']]
 
-const KIND_ORDER: Record<string, number> = { longform: 0, story: 1, montage: 2, clip: 3 }
-const renderLabel = (r: Render) => r.kind === 'longform' ? `YouTube partie ${(r.moment_id ?? 0) + 1}` : r.kind === 'story' ? `Résumé partie ${(r.moment_id ?? 0) + 1}` : r.kind === 'montage' ? 'Montage' : `Clip #${r.moment_id}`
+const KIND_ORDER: Record<string, number> = { compilation: -1, longform: 0, story: 1, montage: 2, clip: 3 }
+const renderLabel = (r: Render) => r.kind === 'compilation' ? 'Vidéo YouTube (plusieurs parties)' : r.kind === 'longform' ? `YouTube partie ${(r.moment_id ?? 0) + 1}` : r.kind === 'story' ? `Résumé partie ${(r.moment_id ?? 0) + 1}` : r.kind === 'montage' ? 'Montage' : `Clip #${r.moment_id}`
 
 // élisions et ponctuation découpées par Whisper : collées au mot précédent, comme dans le rendu
 const GLUE = /^['’\-.,!?…)]/
@@ -35,6 +36,7 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
   const [tab, setTab] = useState<'matches' | 'moments' | 'subs' | 'sounds'>('matches')
   const [publishing, setPublishing] = useState<Render | null>(null)
   const [deletingVideo, setDeletingVideo] = useState(false)
+  const [thumbing, setThumbing] = useState(false)
   const [deletingRender, setDeletingRender] = useState<Render | null>(null)
   const player = useRef<HTMLVideoElement>(null)
   const loopEnd = useRef<number | null>(null)
@@ -125,6 +127,9 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
         }}>
           {games.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
         </select>
+        <button className="btn" disabled={!analysis} onClick={() => setThumbing(true)} title="Créer une miniature YouTube">
+          <ImageIcon size={16} aria-hidden /> Miniature
+        </button>
         <button className="btn icon danger" disabled={busy} onClick={() => setDeletingVideo(true)}
           aria-label="Supprimer cette vidéo" title={busy ? 'En cours de traitement' : 'Supprimer cette vidéo'}><Trash size={17} /></button>
         <button className="btn" disabled={busy} onClick={() => api.analyze(id).then(() => toast('Analyse relancée'))}>
@@ -186,7 +191,7 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
               </div>
               <div className="clips">
                 {[...renders].sort((a, b) => (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9) || (a.moment_id ?? 0) - (b.moment_id ?? 0)).map((r, i) => (
-                  <div key={r.id} className={`card clip ${r.kind !== 'clip' ? 'montage' : ''} ${r.kind === 'longform' ? 'longform' : ''}`} style={{ animationDelay: `${i * 40}ms` }}>
+                  <div key={r.id} className={`card clip ${r.kind !== 'clip' ? 'montage' : ''} ${['longform', 'compilation'].includes(r.kind) ? 'longform' : ''}`} style={{ animationDelay: `${i * 40}ms` }}>
                     <video src={`${fileUrl(r.path)}&v=${r.created_at}`} controls preload="metadata" />
                     <div className="clip-foot">
                       {r.kind === 'clip' ? <>Clip #{r.moment_id}</> : <><Star size={15} weight="fill" color="var(--accent)" aria-hidden /> {renderLabel(r)}</>}
@@ -262,11 +267,16 @@ export default function VideoView({ id, games, summary, onBack }: Props) {
                 onSeek={(t, until) => seek(t, until)} onChanged={load} />
             ) : (
               <Subtitles analysis={analysis} time={time} onSeek={t => seek(t)}
-                onEdit={async (s, w, text) => { await api.editWord(id, s, w, text); load(); toast('Mot corrigé', 'success') }} />
+                onEdit={async (s, w, text) => { await api.editWord(id, s, w, text); load(); toast('Mot corrigé', 'success') }}
+                onEditLine={async (s, text) => {
+                  await api.editLine(id, s, text); load()
+                  toast(text ? 'Phrase corrigée · re-rends le short pour la voir' : 'Sous-titre supprimé', 'success')
+                }} />
             )}
           </div>
         </aside>
       </div>
+      {thumbing && <ThumbnailDialog vid={id} time={time} onClose={() => setThumbing(false)} />}
       {deletingVideo && (
         <DeleteVideoDialog v={v} onClose={() => setDeletingVideo(false)} onDone={msg => { toast(msg, 'success'); onBack() }} />
       )}
@@ -486,11 +496,14 @@ function MomentCard({ vid, m, index, active, rendered, disabled, onPlay, onPatch
   )
 }
 
-function Subtitles({ analysis, time, onSeek, onEdit }: {
+function Subtitles({ analysis, time, onSeek, onEdit, onEditLine }: {
   analysis: Analysis; time: number; onSeek: (t: number) => void; onEdit: (s: number, w: number, text: string) => void
+  onEditLine: (s: number, text: string) => void
 }) {
   const [editing, setEditing] = useState<[number, number] | null>(null)
   const [draft, setDraft] = useState('')
+  const [line, setLine] = useState<number | null>(null)  // phrase entière en cours de correction
+  const [lineDraft, setLineDraft] = useState('')
   const current = analysis.segments.findIndex(s => time >= s.start && time < s.end + 0.3)
   const segRefs = useRef<(HTMLDivElement | null)[]>([])
   useEffect(() => {
@@ -502,13 +515,22 @@ function Subtitles({ analysis, time, onSeek, onEdit }: {
   return (
     <>
       <div className="subs-legend">
-        <span>Clique un mot pour le corriger</span>
+        <span>Clique un mot pour le corriger, ou le crayon pour retaper toute la phrase</span>
         {lowCount > 0 && <span><span className="low-sample">{lowCount} mots</span> à vérifier</span>}
       </div>
       <div className="subs">
         {analysis.segments.map((seg, si) => (
           <div key={si} ref={el => { segRefs.current[si] = el }} className={`seg ${si === current ? 'current' : ''}`}>
             <button className="seg-time" onClick={() => onSeek(seg.start)} aria-label={`Aller à ${fmtTime(seg.start)}`}>{fmtTime(seg.start)}</button>
+            {line === si ? (
+              <input className="input line-input" autoFocus value={lineDraft} aria-label="Corriger la phrase"
+                placeholder="Phrase vide = sous-titre supprimé"
+                onChange={e => setLineDraft(e.target.value)} onBlur={() => setLine(null)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { if (lineDraft.trim() !== seg.text.trim()) onEditLine(si, lineDraft.trim()); setLine(null) }
+                  if (e.key === 'Escape') setLine(null)
+                }} />
+            ) : (
             <div>
               {seg.words.map((w, wi) => editing?.[0] === si && editing?.[1] === wi ? (
                 <input key={wi} className="input w-input" autoFocus value={draft} aria-label="Corriger le mot"
@@ -523,6 +545,13 @@ function Subtitles({ analysis, time, onSeek, onEdit }: {
                   onClick={() => { setEditing([si, wi]); setDraft(w.word) }}>{w.word}</button>
               ))}
             </div>
+            )}
+            {line !== si && (
+              <button className="btn icon ghost seg-edit" onClick={() => { onSeek(seg.start); setLine(si); setLineDraft(seg.text) }}
+                aria-label="Retaper toute la phrase" title="Retaper toute la phrase (Entrée pour valider)">
+                <PencilSimple size={14} aria-hidden />
+              </button>
+            )}
           </div>
         ))}
       </div>

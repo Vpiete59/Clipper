@@ -27,6 +27,17 @@ FAST = 1.8  # vitesse des passages calmes
 QUIET_MIN = 2.5  # un passage calme doit durer au moins ça pour être accéléré
 
 
+KILL_BEFORE, KILL_AFTER = 0.5, 0.8  # kill cam : le ralenti démarre 0,5 s avant la touche fatale
+
+
+def kill_windows(moment: dict, effects: dict) -> list[tuple[float, float]]:
+    """Fenêtres « kill cam » (temps source) : autour de chaque kill de joueur, deux au plus par clip."""
+    if not effects.get("slowmo"):
+        return []
+    kills = sorted((e for e in moment["events"] if "kill_cam" in e["effects"]), key=lambda e: -e["score"])[:MAX_SLOWMO]
+    return sorted((max(moment["start"], e["t"] - KILL_BEFORE), min(moment["end"], e["t"] + KILL_AFTER)) for e in kills)
+
+
 def _pieces(moment: dict, effects: dict, quiet: list[bool] | None = None, step: float = 0.5) -> list[tuple[float, float, float]]:
     """Découpe le moment en morceaux (début, fin, vitesse) en temps relatif au début du clip.
 
@@ -37,6 +48,8 @@ def _pieces(moment: dict, effects: dict, quiet: list[bool] | None = None, step: 
     total = end - start
     slow: list[list[float]] = []
     if effects.get("slowmo"):
+        for lo, hi in kill_windows(moment, effects):
+            slow.append([lo - start, hi - start])
         peaks = sorted((e for e in moment["events"] if "slowmo" in e["effects"]), key=lambda e: -e["score"])
         for e in peaks[:MAX_SLOWMO]:
             lo, hi = max(0.0, e["t"] - start - 0.4), min(total, e["t"] - start + 1.0)
@@ -181,7 +194,11 @@ def render_clip(
         flashes = [round(lead, 3), *flashes]  # éclair au moment du retour en arrière
 
     base = 1.06 if shakes else 1.0
-    zoom = f"min(1.35,{base}+" + _sum_expr(punch, "0.16*exp(-pow((t-{T})/0.35,2))") + ")"
+    # kill cam : zoom qui monte vers le viseur pendant le ralenti puis redescend (utile quand l'ennemi est loin)
+    kill_zoom = "+".join(
+        f"0.3*clip((t-{remap(a):.3f})/0.35,0,1)*clip(({remap(b) + 0.35:.3f}-t)/0.45,0,1)"
+        for a, b in kill_windows(moment, effects)) or "0"
+    zoom = f"min(1.45,{base}+" + _sum_expr(punch, "0.16*exp(-pow((t-{T})/0.35,2))") + f"+{kill_zoom})"
     shake = _sum_expr(shakes, "gte(t,{T})*lt(t,{T}+0.9)*28*exp(-(t-{T})*4.5)*sin(t*57)")
 
     # --- graphe : morceaux (ralentis) -> concat -> recadrage -> effets -> sous-titres

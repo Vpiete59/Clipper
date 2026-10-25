@@ -11,7 +11,7 @@ import numpy as np
 
 from . import games, media, scoring, sounds, transcribe
 from .config import ANALYSIS_DIR, Settings
-from .cues import STEP, audio, chat, speech, visual
+from .cues import STEP, audio, chat, hitmarker, speech, visual
 
 Progress = Callable[[str, float], None]
 
@@ -222,7 +222,17 @@ def rescore(vid: str, settings: Settings, game_id: str | None = None) -> dict:
     hits = speech.keyword_hits(raw["segments"], keywords)
     # règles plein écran ré-appliquées aux lignes lues : corriger un motif ne demande pas de relancer l'OCR
     ocr = raw["ocr"] + visual.match_rules(raw.get("ocr_lines", []), profile.get("ocr_rules", {}).get(raw["orientation"], []))
-    events = scoring.detect_events(profile, signals, ocr, hits, raw.get("bookmarks", []))
+    # phrases dites en jeu : alerte avant un combat, allié à terre, ennemi à terre (listes des Réglages)
+    phrase_hits = {kind: speech.keyword_hits(raw["segments"], {p: 1 for p in phrases})
+                   for kind, phrases in (("alert", settings.alert_phrases), ("ally_down", settings.ally_down_phrases),
+                                         ("enemy_down", settings.enemy_down_phrases))}
+    # « X » de touche au centre de l'écran, cherché seulement autour des sons de combat
+    markers = []
+    if profile.get("hit_marker") and raw["orientation"] == "landscape":
+        fight_sounds = [e["t"] for e in scoring.detect_events(profile, signals, [], [], [])
+                        if e["type"] in ("gunfight", "player_hit", "death_cry", "pvp_fight")]
+        markers = hitmarker.scan(raw["path"], hitmarker.windows_around(fight_sounds), work_dir(vid) / "hitmarkers.json")
+    events = scoring.detect_events(profile, signals, ocr, hits, raw.get("bookmarks", []), phrase_hits, markers)
     # compteur « 1/3 » et boss de chaque indice, puis découpage final (les libellés en dépendent)
     scoring.enrich_clues(events, raw.get("ocr_lines", []), scoring.build_matches(events, raw["duration"], settings.story_preset))
     matches = scoring.build_matches(events, raw["duration"], settings.story_preset)

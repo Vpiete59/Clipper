@@ -172,8 +172,7 @@
       "before": 4,
       "after": 3,
       "effects": [
-        "shake",
-        "slowmo"
+        "shake"
       ]
     },
     "clue": {
@@ -207,7 +206,6 @@
       "before": 12,
       "after": 2,
       "effects": [
-        "slowmo",
         "flash"
       ],
       "merge_s": 120
@@ -218,7 +216,7 @@
       "before": 10,
       "after": 5,
       "effects": [
-        "punch_zoom"
+        "kill_cam"
       ]
     },
     "pvp_fight": {
@@ -227,7 +225,6 @@
       "before": 6,
       "after": 5,
       "effects": [
-        "slowmo",
         "shake"
       ]
     },
@@ -304,6 +301,43 @@
       "effects": [],
       "merge_s": 900,
       "highlight": false
+    },
+    "alert": {
+      "label": "Alerte",
+      "score": 4,
+      "before": 5,
+      "after": 3,
+      "effects": [],
+      "merge_s": 20
+    },
+    "ally_down": {
+      "label": "Allié à terre",
+      "score": 8,
+      "before": 6,
+      "after": 4,
+      "effects": [
+        "shake"
+      ],
+      "merge_s": 10
+    },
+    "enemy_down": {
+      "label": "Ennemi à terre",
+      "score": 10,
+      "before": 8,
+      "after": 3,
+      "effects": [
+        "punch_zoom"
+      ],
+      "merge_s": 10
+    },
+    "hit_marker": {
+      "label": "Joueur touché",
+      "score": 6,
+      "before": 5,
+      "after": 2,
+      "effects": [
+        "punch_zoom"
+      ]
     }
   },
   "hashtags": [
@@ -530,5 +564,6 @@
         ]
       }
     ]
-  }
+  },
+  "hit_marker": true
 }

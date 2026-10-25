@@ -112,11 +112,13 @@ def build_ass(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
+    # un titre long (« PREMIER INDICE · BOUCHER ») rétrécit pour tenir dans la largeur de l'écran
+    fit = lambda base, chars: round(base * min(1.0, chars / max(1, len(hook or ""))))  # noqa: E731
     if hook and title_style == "center":
         # gros titre qui claque au centre puis s'efface : « PREMIER INDICE »
         lines.append(
             f"Dialogue: 2,{_ts(0)},{_ts(min(1.9, duration))},Big,,0,0,0,,"
-            f"{{\\pos({width // 2},{int(height * 0.36)})\\fad(0,300)\\fscx160\\fscy160"
+            f"{{\\pos({width // 2},{int(height * 0.36)})\\fs{fit(150, 13)}\\fad(0,300)\\fscx160\\fscy160"
             "\\t(0,140,\\fscx95\\fscy95)\\t(140,240,\\fscx100\\fscy100)}"
             + _esc(hook.upper())
         )
@@ -124,13 +126,14 @@ def build_ass(
         # bande noire, lettres dorées espacées : la typo des notifications de Hunt
         lines.append(
             f"Dialogue: 2,{_ts(0)},{_ts(min(2.6, duration))},Hunt,,0,0,0,,"
-            "{\\fad(250,350)\\fsp14\\t(0,600,\\fsp6)}" + _esc(hook.upper())
+            f"{{\\fs{fit(74, 16)}\\fad(250,350)\\fsp14\\t(0,600,\\fsp6)}}" + _esc(hook.upper())
         )
     elif hook:
         # bandeau d'accroche : apparaît en rebond puis disparaît après 2,8 s
         lines.append(
             f"Dialogue: 1,{_ts(0)},{_ts(min(2.8, duration))},Hook,,0,0,0,,"
-            "{\\fad(80,250)\\fscx70\\fscy70\\t(0,180,\\fscx105\\fscy105)\\t(180,300,\\fscx100\\fscy100)\\3c&H0000E5FF&}"
+            f"{{\\fs{fit(int(size * 0.95), 17)}\\fad(80,250)\\fscx70\\fscy70\\t(0,180,\\fscx105\\fscy105)"
+            "\\t(180,300,\\fscx100\\fscy100)\\3c&H0000E5FF&}"
             + _esc(hook.upper())
         )
 

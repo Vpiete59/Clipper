@@ -16,7 +16,8 @@ import numpy as np
 
 from . import games, jobs, library, media, pipeline, publish, sounds, trash, watcher
 from .cues import STEP, audio
-from .config import UI_DIST, Settings
+from .config import DATA_DIR, UI_DIST, Settings
+from .render import thumbnail
 from .render.subtitles import join_words
 
 app = FastAPI(title="Clipper")
@@ -277,6 +278,36 @@ def edit_word(vid: str, body: WordEdit):
     return {"ok": True}
 
 
+class LineEdit(BaseModel):
+    text: str
+
+
+@app.put("/api/videos/{vid}/segments/{index}")
+def edit_line(vid: str, index: int, body: LineEdit):
+    """Phrase entière retapée : mêmes mots en nombre → timings gardés, sinon répartis sur la phrase
+    au prorata de leur longueur. Une ligne vide supprime le sous-titre."""
+    new = body.text.split()
+    for loader, saver in ((pipeline.load_raw, pipeline.save_raw),
+                          (pipeline.load_analysis, lambda v, a: _save_analysis(v, a))):
+        data = loader(vid)
+        if not 0 <= index < len(data["segments"]):
+            raise HTTPException(404, "Phrase introuvable")
+        seg = data["segments"][index]
+        old = seg["words"]
+        if len(new) == len(old):
+            words = [{**w, "word": n} for w, n in zip(old, new)]
+        else:
+            total, t = sum(len(n) + 1 for n in new), seg["start"]
+            words = []
+            for n in new:
+                d = (seg["end"] - seg["start"]) * (len(n) + 1) / total
+                words.append({"word": n, "start": round(t, 3), "end": round(t + d, 3), "prob": 1.0})
+                t += d
+        seg["words"], seg["text"] = words, join_words(new)
+        saver(vid, data)
+    return {"ok": True}
+
+
 class RenderBody(BaseModel):
     moment_ids: list[int] | None = None
     montage: bool = False
@@ -289,6 +320,101 @@ def render(vid: str, body: RenderBody):
     _video_or_404(vid)
     return {"queued": jobs.enqueue("render", vid, moment_ids=body.moment_ids, montage=body.montage,
                                    match_ids=body.match_ids, longform=body.longform)}
+
+
+# ---------- vidéo YouTube : compilation de parties
+
+@app.get("/api/matches")
+def all_matches():
+    """Toutes les parties reconnues dans la bibliothèque, pour choisir celles à compiler."""
+    out = []
+    for v in library.list_videos():
+        a = pipeline.load_analysis(v["id"])
+        for m in (a or {}).get("matches", []):
+            out.append({"vid": v["id"], "video": v["name"], "added_at": v["added_at"], **{k: m[k] for k in (
+                "id", "start", "end", "outcome", "clues", "kills", "bounty", "boss", "potential", "worth") if k in m},
+                "chapters": len(m["chapters"])})
+    return out
+
+
+class CompileBody(BaseModel):
+    items: list[list]  # [[id vidéo, id partie], ...] dans l'ordre
+    title: str = ""
+
+
+@app.post("/api/compilations")
+def compile_video(body: CompileBody):
+    if not body.items:
+        raise HTTPException(400, "Choisis au moins une partie")
+    first = body.items[0][0]
+    _video_or_404(first)
+    return {"queued": jobs.enqueue("compile", first, items=body.items, title=body.title)}
+
+
+# ---------- créateur de miniature
+
+class ThumbBody(BaseModel):
+    vid: str
+    t: float
+    text: str
+    subtitle: str = ""
+    color: str = "jaune"
+    position: str = "bas"
+    boost: bool = True
+    size: int = 118
+    auto_frame: bool = False  # chercher l'image la plus lisible autour de t
+
+
+def _thumb_args(body: ThumbBody) -> tuple[str, float]:
+    source = _video_or_404(body.vid)["path"]
+    t = thumbnail.best_frame(source, body.t, span=4) if body.auto_frame else body.t
+    return source, t
+
+
+@app.get("/api/thumbnail/candidates/{vid}")
+def thumb_candidates(vid: str):
+    """Moments qui font de bonnes miniatures : kills, boss, prime, extraction, puis les meilleurs moments."""
+    _video_or_404(vid)
+    a = pipeline.load_analysis(vid) or {}
+    out = []
+    for m in a.get("matches", []):
+        for c in m["chapters"]:
+            if c["type"] in ("kill", "boss_down", "bounty", "extracted", "confrontation"):
+                out.append({"t": c["t"], "label": f"Partie {m['id'] + 1} · {c['label']}"})
+    for mo in sorted(a.get("moments", []), key=lambda x: -x["score"])[:6]:
+        out.append({"t": mo["peak"], "label": mo.get("hook") or mo["title"]})
+    seen, unique = set(), []
+    for c in out:
+        key = round(c["t"] / 5)
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
+    return unique[:16]
+
+
+@app.post("/api/thumbnail/preview")
+def thumb_preview(body: ThumbBody):
+    source, t = _thumb_args(body)
+    out = DATA_DIR / "previews"
+    out.mkdir(exist_ok=True)
+    path = out / f"apercu_{body.vid}.jpg"
+    thumbnail.make_thumbnail(source, t, path, text=body.text, subtitle=body.subtitle, color=body.color,
+                             position=body.position, boost=body.boost, size=body.size)
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-Frame-Time": f"{t:.2f}"})
+
+
+@app.post("/api/thumbnail/save")
+def thumb_save(body: ThumbBody):
+    source, t = _thumb_args(body)
+    folder = jobs.output_dir(body.vid)
+    folder.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while (folder / f"miniature_{n:02d}.jpg").exists():
+        n += 1
+    path = folder / f"miniature_{n:02d}.jpg"
+    thumbnail.make_thumbnail(source, t, path, text=body.text, subtitle=body.subtitle, color=body.color,
+                             position=body.position, boost=body.boost, size=body.size)
+    return {"path": str(path), "t": t}
 
 
 # ---------- sons appris (cri de mort…)

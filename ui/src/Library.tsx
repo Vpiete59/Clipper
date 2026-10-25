@@ -1,10 +1,11 @@
 import {
   ArrowRight, CheckCircle, Clock, DeviceMobile, FilmStrip, Lightning, MagnifyingGlass, Play, Plus,
-  Sparkle, Trash, Tray, VideoCamera, Warning,
+  Sparkle, Trash, Tray, VideoCamera, Warning, YoutubeLogo,
 } from '@phosphor-icons/react'
 import { useEffect, useMemo, useState } from 'react'
 import { BUSY } from './App'
 import { api, fmtSize, fmtTime, STAGE_LABEL, STATUS_LABEL, type Game, type InboxFile, type Video } from './api'
+import CompilationDialog from './CompilationDialog'
 import ConfirmDialog from './ConfirmDialog'
 import { Spinner, useToast } from './ui'
 
@@ -18,6 +19,7 @@ export default function Library({ videos, games, onOpen }: { videos: Video[] | n
   const [importing, setImporting] = useState<string | null>(null)
   const [toDelete, setToDelete] = useState<Video | null>(null)
   const [inboxDelete, setInboxDelete] = useState<InboxFile | null>(null)
+  const [compiling, setCompiling] = useState(false)
   const toast = useToast()
   const list = useMemo(() => videos ?? [], [videos])
 
@@ -57,6 +59,9 @@ export default function Library({ videos, games, onOpen }: { videos: Video[] | n
           <h1 className="page-title">Bibliothèque</h1>
         </div>
         <div className="row" style={{ gap: 8 }}>
+          <button className="btn" onClick={() => setCompiling(true)}>
+            <YoutubeLogo size={16} weight="fill" color="#ff3b3b" aria-hidden /> Créer une vidéo YouTube
+          </button>
           <input className="input" style={{ width: 360 }} placeholder="Coller le chemin d'une vidéo (.mkv, .mp4)…"
             aria-label="Chemin d'une vidéo à analyser" value={path} onChange={e => setPath(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && path && importPath(path)} />
@@ -132,6 +137,7 @@ export default function Library({ videos, games, onOpen }: { videos: Video[] | n
         </section>
       )}
 
+      {compiling && <CompilationDialog onClose={() => setCompiling(false)} />}
       {toDelete && (
         <DeleteVideoDialog v={toDelete} onClose={() => setToDelete(null)} onDone={msg => { setToDelete(null); toast(msg, 'success'); loadInbox() }} />
       )}

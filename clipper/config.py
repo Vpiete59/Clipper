@@ -94,6 +94,18 @@ class Settings:
         "sfx": True,
     })
     custom_keywords: list[str] = field(default_factory=list)
+    # phrases dites en jeu (tirées de tes VOD, à compléter dans les Réglages)
+    alert_phrases: list[str] = field(default_factory=lambda: [
+        "y a des gens", "il y a des gens", "des gens sur nous", "j'entends des gens", "j'ai entendu", "j'entends un mec",
+        "tu entends", "t'entends", "des joueurs", "y a des joueurs", "un joueur", "quelqu'un", "attends chut", "chut",
+        "ils arrivent", "ils viennent", "ils sont là", "il est là", "attention", "pas loin", "derrière nous",
+        "une équipe", "ça tire", "on se fait tirer", "ils sont deux", "ils sont trois", "il campe", "il y en a encore", "y a un mec", "un mec ici", "il a un snipe"])
+    ally_down_phrases: list[str] = field(default_factory=lambda: [
+        "je suis down", "je suis à terre", "je suis mort", "il m'a tué", "il m'a eu", "rez moi", "relève moi",
+        "tu peux rez", "il me touche", "je me fais", "je meurs", "faut m'aider", "aide moi"])
+    enemy_down_phrases: list[str] = field(default_factory=lambda: [
+        "je l'ai mis à terre", "il est down", "il est à terre", "un de moins", "j'en ai eu un", "il est mort",
+        "bien joué", "je l'ai eu", "je l'ai tué", "dans la tête", "il en reste", "j'en ai sorti un", "un mec qui est mort", "il brûle", "il crame"])
     # publication
     extra_hashtags: list[str] = field(default_factory=list)
     publish_signature: str = ""

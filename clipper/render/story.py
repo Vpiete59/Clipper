@@ -45,7 +45,7 @@ def render_story(
     clips: list[Path] = []
 
     # pas de teaser : le résumé raconte la partie dans l'ordre, du premier indice à la sortie
-    kill_times = sorted(c["t"] for c in chapters if c["type"] == "kill")
+    kill_times = sorted({k for c in chapters for k in c.get("kills", [])})
     for i, c in enumerate(chapters, start=1):
         m = _moment(analysis, c["start"], c["end"], c["t"], c["label"])
         kills = {"base": sum(1 for k in kill_times if k < c["start"]), "times": kill_times} if kill_times else None

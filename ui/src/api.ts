@@ -1,3 +1,12 @@
+export type MatchSummary = {
+  vid: string; video: string; added_at: number; id: number; start: number; end: number
+  outcome: 'extracted' | 'dead' | 'unknown'; clues: number; kills: number; bounty: boolean; boss: boolean
+  potential: number; worth: boolean; chapters: number
+}
+export type ThumbOptions = {
+  vid: string; t: number; text: string; subtitle: string; color: string; position: string
+  boost: boolean; size: number; auto_frame: boolean
+}
 export type QueueState = { paused: boolean; running: { vid: string; kind: string } | null; pending: { vid: string; kind: string }[] }
 export type Video = {
   id: string; path: string; name: string; size: number; duration: number | null
@@ -45,6 +54,7 @@ export type Settings = {
   layout: string; facecam_rect: number[]; effects: Record<string, boolean>; custom_keywords: string[]
   extra_hashtags: string[]; publish_signature: string
   story_preset: string; title_style: string; story_only_worth: boolean
+  alert_phrases: string[]; ally_down_phrases: string[]; enemy_down_phrases: string[]
 }
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -64,6 +74,15 @@ export const api = {
   videos: () => req<Video[]>('GET', '/api/videos'),
   inbox: () => req<InboxFile[]>('GET', '/api/inbox'),
   queue: () => req<QueueState>('GET', '/api/queue'),
+  allMatches: () => req<MatchSummary[]>('GET', '/api/matches'),
+  compile: (items: [string, number][], title: string) => req('POST', '/api/compilations', { items, title }),
+  thumbCandidates: (vid: string) => req<{ t: number; label: string }[]>('GET', `/api/thumbnail/candidates/${vid}`),
+  thumbPreview: async (o: ThumbOptions) => {
+    const res = await fetch('/api/thumbnail/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o) })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `Erreur ${res.status}`)
+    return { url: URL.createObjectURL(await res.blob()), t: Number(res.headers.get('X-Frame-Time') ?? o.t) }
+  },
+  thumbSave: (o: ThumbOptions) => req<{ path: string; t: number }>('POST', '/api/thumbnail/save', o),
   pauseQueue: (paused: boolean) => req<QueueState>('POST', '/api/queue/pause', { paused }),
   unqueue: (vid: string) => req('DELETE', `/api/queue/${vid}`),
   clearQueue: () => req<{ cleared: number }>('DELETE', '/api/queue'),
@@ -79,6 +98,7 @@ export const api = {
   patchMoment: (id: string, mid: number, patch: Partial<Moment>) => req<Moment>('PATCH', `/api/videos/${id}/moments/${mid}`, patch),
   addMoment: (id: string, start: number, end: number, hook: string) => req<Analysis>('POST', `/api/videos/${id}/moments`, { start, end, hook }),
   editWord: (id: string, segment: number, word: number, text: string) => req('PUT', `/api/videos/${id}/words`, { segment, word, text }),
+  editLine: (id: string, segment: number, text: string) => req('PUT', `/api/videos/${id}/segments/${segment}`, { text }),
   render: (id: string, moment_ids: number[] | null, montage: boolean, match_ids: number[] | null = null, longform = false) =>
     req('POST', `/api/videos/${id}/render`, { moment_ids, montage, match_ids, longform }),
   games: () => req<Game[]>('GET', '/api/games'),
@@ -114,7 +134,7 @@ export const STATUS_LABEL: Record<string, string> = {
 
 export const STAGE_LABEL: Record<string, string> = {
   audio: 'Extraction audio', voix: 'Isolation des voix', transcription: 'Transcription', sons: 'Sons', image: 'Lecture du HUD',
-  moments: 'Moments forts', rendu: 'Rendu des clips', montage: 'Montage', longue: 'Vidéo YouTube',
+  moments: 'Moments forts', rendu: 'Rendu des clips', montage: 'Montage', longue: 'Vidéo YouTube', compilation: 'Vidéo YouTube (compilation)',
 }
 
 export const EVENT_COLOR: Record<string, string> = {

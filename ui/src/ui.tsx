@@ -10,6 +10,7 @@ export const EVENTS: Record<string, { color: string; icon: Icon }> = {
   gunfight: { color: '#ff6b5e', icon: Crosshair },
   pvp_fight: { color: '#ff3d55', icon: Sword },
   death_cry: { color: '#e879f9', icon: Ear },
+  hit_marker: { color: '#f8fafc', icon: Crosshair },
   death: { color: '#c4a1ff', icon: Skull },
   bounty: { color: '#ffb938', icon: Coins },
   extract: { color: '#3dd68c', icon: SignOut },
